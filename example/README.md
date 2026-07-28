@@ -1,17 +1,17 @@
-# vertical_sliding_video_example
+# vertical_sliding_video example
 
-Demonstrates how to use the vertical_sliding_video plugin.
+示例使用阿里云 VOD Type A URL 鉴权。运行时注入 PrivateKey，不要将 Key
+写入源码或提交到版本库：
 
-## Getting Started
+```shell
+flutter run --dart-define=VOD_AUTH_KEY=your-private-key
+```
 
-This project is a starting point for a Flutter application.
+构建 release：
 
-A few resources to get you started if this is your first Flutter project:
+```shell
+flutter build apk --dart-define=VOD_AUTH_KEY=your-private-key
+```
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+`--dart-define` 可以避免 Key 被保存在仓库中，但无法让客户端内置密钥真正保密。
+生产环境通常应由可信业务服务端生成短有效期播放地址。

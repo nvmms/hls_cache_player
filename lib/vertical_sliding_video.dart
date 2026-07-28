@@ -1,8 +1,6 @@
+library;
 
-import 'vertical_sliding_video_platform_interface.dart';
-
-class VerticalSlidingVideo {
-  Future<String?> getPlatformVersion() {
-    return VerticalSlidingVideoPlatform.instance.getPlatformVersion();
-  }
-}
+export 'src/video_controller.dart';
+export 'src/video_models.dart';
+export 'src/video_player_view.dart';
+export 'src/video_pool.dart';
