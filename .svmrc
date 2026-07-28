@@ -1,0 +1,6 @@
+{
+    "schemaVersion": 1,
+    "sdks": {
+        "flutter": "3.44.8"
+    }
+}
