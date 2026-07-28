@@ -1,5 +1,7 @@
 # vertical_sliding_video
 
+[中文](README.md) | [English](README.en.md)
+
 面向竖屏短视频流的 Flutter HLS 播放器池，支持 Android 和 iOS。
 
 ## 功能
@@ -12,6 +14,46 @@
 - 有界内存 LRU 和磁盘 LRU 缓存
 - 多播放器提前 prepare，支持竖向 `PageView` 快速切换
 - 相同资源的并发下载自动合并
+
+## 安装
+
+项目暂未发布到 pub.dev，请通过 Git 安装。在应用的 `pubspec.yaml` 中添加：
+
+```yaml
+dependencies:
+  vertical_sliding_video:
+    git: https://github.com/nvmms/vertical_sliding_video.git
+```
+
+然后获取依赖：
+
+```shell
+flutter pub get
+```
+
+在 Dart 文件中导入：
+
+```dart
+import 'package:vertical_sliding_video/vertical_sliding_video.dart';
+```
+
+需要锁定特定版本时，建议将 `ref` 改为 Git tag 或 commit SHA：
+
+```yaml
+dependencies:
+  vertical_sliding_video:
+    git:
+      url: https://github.com/nvmms/vertical_sliding_video.git
+      ref: your-tag-or-commit-sha
+```
+
+本地开发时也可以使用 path dependency：
+
+```yaml
+dependencies:
+  vertical_sliding_video:
+    path: ../vertical_sliding_video
+```
 
 ## 快速开始
 

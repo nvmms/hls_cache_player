@@ -1,5 +1,7 @@
 # vertical_sliding_video
 
+[中文](README.md) | [English](README.en.md)
+
 A pooled HLS video player for vertical Flutter feeds, with Android and iOS
 support.
 
@@ -14,6 +16,47 @@ support.
 - Bounded in-memory and on-disk LRU caches
 - Pre-prepared players for fast vertical `PageView` transitions
 - Coalescing of concurrent requests for the same resource
+
+## Installation
+
+The package has not been published to pub.dev yet. Install it from Git by
+adding the following dependency to your application's `pubspec.yaml`:
+
+```yaml
+dependencies:
+  vertical_sliding_video:
+    git: https://github.com/nvmms/vertical_sliding_video.git
+```
+
+Fetch the dependency:
+
+```shell
+flutter pub get
+```
+
+Import the package:
+
+```dart
+import 'package:vertical_sliding_video/vertical_sliding_video.dart';
+```
+
+For reproducible builds, replace `main` with a Git tag or commit SHA:
+
+```yaml
+dependencies:
+  vertical_sliding_video:
+    git:
+      url: https://github.com/nvmms/vertical_sliding_video.git
+      ref: your-tag-or-commit-sha
+```
+
+Use a path dependency for local development:
+
+```yaml
+dependencies:
+  vertical_sliding_video:
+    path: ../vertical_sliding_video
+```
 
 ## Getting started
 
