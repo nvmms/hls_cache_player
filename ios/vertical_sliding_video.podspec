@@ -5,9 +5,9 @@
 Pod::Spec.new do |s|
   s.name             = 'vertical_sliding_video'
   s.version          = '0.0.1'
-  s.summary          = 'A new Flutter plugin project.'
+  s.summary          = 'A pooled, cached HLS player for vertical Flutter feeds.'
   s.description      = <<-DESC
-A new Flutter plugin project.
+A pooled Android and iOS HLS player for low-latency vertical video feeds.
                        DESC
   s.homepage         = 'http://example.com'
   s.license          = { :file => '../LICENSE' }

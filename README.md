@@ -1,6 +1,6 @@
 # vertical_sliding_video
 
-面向竖屏短视频流的 Flutter HLS 播放器池。目前实现 Android，iOS 尚未实现。
+面向竖屏短视频流的 Flutter HLS 播放器池，支持 Android 和 iOS。
 
 ## 能力
 
@@ -11,6 +11,8 @@
 - 内存 LRU 与 Media3 `SimpleCache` 磁盘 LRU
 - 同一个 controller 在列表页和竖屏页之间转移，保留播放位置及缓冲
 - 多播放器提前 prepare，支持竖向 `PageView` 快速切换
+- iOS 使用 AVAssetResourceLoader 重写 HLS 资源请求，使 playlist、Key、
+  init map 和媒体分片经过统一缓存
 
 ## 快速开始
 
@@ -78,4 +80,19 @@ flutter run
 
 示例会预热三个 HLS 视频并提前申请三个播放器。列表首条正在播放时，点击进入竖屏会继续使用同一个原生播放器；上下滑动会切换到已 prepare 的相邻播放器。
 
-当前 HLS 预加载器面向常规 VOD playlist。多码率 master playlist 暂时选择第一条 variant；后续可增加由业务指定码率或根据带宽选择 variant 的策略。
+当前 HLS 预加载器面向常规 VOD playlist。预加载多码率 master playlist 时
+暂时选择第一条 variant；实际播放仍由 Android Media3 或 iOS AVPlayer
+进行码率选择，所选 variant 的运行时请求会正常写入磁盘缓存。
+
+## iOS
+
+iOS 最低版本为 13.0，使用 AVPlayer 和 AVAssetResourceLoader。Flutter API
+与 Android 完全相同，不需要平台分支：
+
+```dart
+final controller = await VerticalVideoPool.acquire(source, autoPlay: true);
+```
+
+播放器收到原始 HLS 地址后，会将 playlist 中的 variant、Key、init map、
+字幕和媒体分片 URL 重写为内部 `vsv-cache` 协议。资源读取顺序为内存、
+磁盘、网络，网络响应会同时进入缓存。
