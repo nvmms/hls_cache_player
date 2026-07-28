@@ -2,19 +2,20 @@
 
 面向竖屏短视频流的 Flutter HLS 播放器池，支持 Android 和 iOS。
 
-## 能力
+## 功能
 
-- Media3 ExoPlayer 有界播放器池
-- 使用业务传入的 `cacheKey` 管理同一视频的缓存命名空间
+- Android Media3 ExoPlayer 播放器池
+- iOS AVPlayer 播放器池
+- 使用业务传入的 `cacheKey` 查找和复用播放实例
 - HLS master/media playlist 解析
 - playlist、加密 Key、fMP4 init map 和首个媒体分片内存预热
-- 内存 LRU 与 Media3 `SimpleCache` 磁盘 LRU
-- 同一个 controller 在列表页和竖屏页之间转移，保留播放位置及缓冲
+- 有界内存 LRU 和磁盘 LRU 缓存
 - 多播放器提前 prepare，支持竖向 `PageView` 快速切换
-- iOS 使用 AVAssetResourceLoader 重写 HLS 资源请求，使 playlist、Key、
-  init map 和媒体分片经过统一缓存
+- 相同资源的并发下载自动合并
 
 ## 快速开始
+
+初始化播放器池：
 
 ```dart
 await VerticalVideoPool.configure(
@@ -22,7 +23,11 @@ await VerticalVideoPool.configure(
   memoryCacheBytes: 48 * 1024 * 1024,
   diskCacheBytes: 768 * 1024 * 1024,
 );
+```
 
+定义视频资源并预热：
+
+```dart
 const source = HlsVideoSource(
   cacheKey: 'post-42-video-v3',
   url: 'https://cdn.example.com/video/master.m3u8',
@@ -30,69 +35,137 @@ const source = HlsVideoSource(
 );
 
 await VerticalVideoPool.preload(source);
-final controller = await VerticalVideoPool.acquire(
-  source,
-  autoPlay: true,
-);
 ```
 
-显示播放器：
+任意组件都可以通过相同的 `cacheKey` 获取播放实例：
 
 ```dart
-VerticalVideoPlayer(controller: controller)
+class VideoItemState extends State<VideoItem> {
+  VerticalVideoController? controller;
+
+  @override
+  void initState() {
+    super.initState();
+    initializePlayer();
+  }
+
+  Future<void> initializePlayer() async {
+    final value = await VerticalVideoPool.acquire(
+      widget.source,
+      autoPlay: widget.autoPlay,
+    );
+    if (!mounted) {
+      await value.release();
+      return;
+    }
+    setState(() => controller = value);
+  }
+
+  @override
+  void dispose() {
+    controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final value = controller;
+    if (value == null) {
+      return const ColoredBox(color: Colors.black);
+    }
+    return VerticalVideoPlayer(controller: value);
+  }
+}
 ```
 
-进入新页面时直接传递同一个 `controller`。不要在旧页面退出前销毁它：
+业务组件不需要从其他页面传递 controller。播放器池会根据 `cacheKey`
+查找现有原生播放器：
 
 ```dart
-Navigator.push(
-  context,
-  MaterialPageRoute(
-    builder: (_) => FullscreenPage(controller: controller),
-  ),
-);
+final controller = await VerticalVideoPool.acquire(source);
 ```
 
-不再使用播放器时释放租约：
+如果同一 `cacheKey` 对应的播放器仍在池中，将返回同一个原生播放实例并增加
+租约计数，因此可以保留播放位置、解码器状态和已经缓冲的数据。每次
+`acquire()` 都必须对应一次 `release()` 或 `dispose()`：
 
 ```dart
 await controller.release();
 ```
 
+## 播放实例的生命周期
+
+播放器池是有上限的。播放器没有租约后会留在空闲池中等待复用：
+
+```text
+acquire(cacheKey)
+  → 命中相同 cacheKey：返回现有播放实例
+  → 未命中：获取空闲实例或创建新实例
+
+release()
+  → 租约减一
+  → 租约归零：暂停并进入空闲池
+
+池已满且需要播放其他视频
+  → 淘汰最久未使用的空闲实例
+```
+
+如果某个空闲实例已经被其他视频复用，再次使用旧 `cacheKey` 时会获得一个
+新的播放实例，旧播放位置不会保留，但内存或磁盘中的媒体缓存仍然可以继续
+命中。
+
+池中所有实例都还有有效租约时，新的不同 `cacheKey` 无法占用播放器。业务
+组件应在不再显示或不再需要预备播放时及时释放 controller。
+
 ## cacheKey
 
-`cacheKey` 由业务方传入，并作为一条视频所有 HLS 资源的缓存命名空间。视频内容或转码版本变化时必须更换 key，例如：
+`cacheKey` 由业务方传入，同时用于：
+
+- 查找相同视频的播放实例
+- 隔离该视频的 HLS 资源缓存
+- 合并相同资源的并发请求
+
+视频内容、转码版本或鉴权身份发生变化时，应更换 key，例如：
 
 ```text
 post-42-video-v3
 ```
 
-不同鉴权身份能够获取不同媒体内容时，也应把身份或内容版本包含在 key 中。
+签名 URL 中只有过期时间变化，而实际媒体内容没有变化时，可以继续使用稳定
+的业务 key，不要直接把完整签名 URL 当作 `cacheKey`。
 
-## Android 验证
+## HLS 缓存
 
-运行示例：
+`preload()` 会优先准备：
+
+- master/media playlist
+- 加密 Key
+- fMP4 init map
+- 第一个媒体分片
+
+实际播放期间的后续分片会经过同一缓存入口，读取顺序为内存、磁盘、网络。
+
+预加载多码率 master playlist 时，目前选择第一条 variant 预热。实际播放仍
+由 Android Media3 或 iOS AVPlayer 进行码率选择，运行时选择的 variant 也会
+正常写入磁盘缓存。
+
+## 平台
+
+### Android
+
+使用 Media3 ExoPlayer、`SimpleCache` 和自定义内存优先 `DataSource`。
+
+### iOS
+
+最低支持 iOS 13.0，使用 AVPlayer 和 AVAssetResourceLoader。playlist 中的
+variant、Key、init map、字幕和媒体分片会被改写到内部缓存协议。
+
+## Example
+
+example 中的 `PostVideoItem` 和 `VerticalFeedVideoItem` 都是独立的
+`StatefulWidget`，各自通过 `initState` 和 `dispose` 管理 controller：
 
 ```shell
 cd example
-flutter run
+flutter run --dart-define=VOD_AUTH_KEY=your-private-key
 ```
-
-示例会预热三个 HLS 视频并提前申请三个播放器。列表首条正在播放时，点击进入竖屏会继续使用同一个原生播放器；上下滑动会切换到已 prepare 的相邻播放器。
-
-当前 HLS 预加载器面向常规 VOD playlist。预加载多码率 master playlist 时
-暂时选择第一条 variant；实际播放仍由 Android Media3 或 iOS AVPlayer
-进行码率选择，所选 variant 的运行时请求会正常写入磁盘缓存。
-
-## iOS
-
-iOS 最低版本为 13.0，使用 AVPlayer 和 AVAssetResourceLoader。Flutter API
-与 Android 完全相同，不需要平台分支：
-
-```dart
-final controller = await VerticalVideoPool.acquire(source, autoPlay: true);
-```
-
-播放器收到原始 HLS 地址后，会将 playlist 中的 variant、Key、init map、
-字幕和媒体分片 URL 重写为内部 `vsv-cache` 协议。资源读取顺序为内存、
-磁盘、网络，网络响应会同时进入缓存。

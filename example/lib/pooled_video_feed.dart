@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:vertical_sliding_video/vertical_sliding_video.dart';
 
-/// Example feed that keeps at most three native player leases.
+/// The list owns no video controllers. Every visible post item independently
+/// acquires and releases its controller with its widget lifecycle.
 class PooledPostListPage extends StatefulWidget {
   const PooledPostListPage({required this.videos, super.key});
 
@@ -12,10 +13,10 @@ class PooledPostListPage extends StatefulWidget {
 }
 
 class _PooledPostListPageState extends State<PooledPostListPage> {
-  final Map<int, VerticalVideoController> _controllers = {};
-  Future<void> _windowOperation = Future<void>.value();
+  final Map<int, GlobalKey<PostVideoItemState>> _itemKeys = {};
   Object? _error;
   bool _ready = false;
+  bool _feedOpen = false;
 
   @override
   void initState() {
@@ -25,71 +26,45 @@ class _PooledPostListPageState extends State<PooledPostListPage> {
 
   Future<void> _prepare() async {
     try {
-      await VerticalVideoPool.configure(maxPlayers: 3);
+      // A list can transiently have more than three mounted children because
+      // ListView keeps a small cache extent. Feed pages normally use at most 3.
+      await VerticalVideoPool.configure(maxPlayers: 4);
       await VerticalVideoPool.preloadAll(widget.videos);
-      await _ensureWindow(0);
-      await _controllers[0]!.play();
       if (mounted) setState(() => _ready = true);
     } catch (error) {
       if (mounted) setState(() => _error = error);
     }
   }
 
-  Future<void> _ensureWindow(int center) {
-    _windowOperation = _windowOperation.then((_) => _applyWindow(center));
-    return _windowOperation;
+  GlobalKey<PostVideoItemState> _keyFor(int index) {
+    return _itemKeys.putIfAbsent(
+      index,
+      () => GlobalKey<PostVideoItemState>(),
+    );
   }
 
-  Future<void> _applyWindow(int center) async {
-    final wanted = _windowIndices(center);
+  Future<void> _openFeed(int index) async {
+    // The list route remains mounted underneath the new route. Explicitly ask
+    // its mounted children to return their leases before the feed acquires its
+    // current/adjacent players.
+    setState(() => _feedOpen = true);
+    await Future.wait(
+      _itemKeys.values.map(
+        (key) => key.currentState?.releaseController() ?? Future<void>.value(),
+      ),
+    );
+    if (!mounted) return;
 
-    // Release stale leases first so the native pool has free slots.
-    final stale = _controllers.keys
-        .where((index) => !wanted.contains(index))
-        .toList(growable: false);
-    for (final index in stale) {
-      final controller = _controllers.remove(index);
-      if (controller != null) await controller.release();
-    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => VerticalFeedPage(
+          videos: widget.videos,
+          initialPage: index,
+        ),
+      ),
+    );
 
-    for (final index in wanted) {
-      if (_controllers.containsKey(index)) continue;
-      _controllers[index] = await VerticalVideoPool.acquire(
-        widget.videos[index],
-      );
-    }
-    if (mounted) setState(() {});
-  }
-
-  Set<int> _windowIndices(int center) {
-    final wanted = <int>{center};
-    for (var distance = 1; wanted.length < 3; distance++) {
-      final next = center + distance;
-      final previous = center - distance;
-      if (next < widget.videos.length) wanted.add(next);
-      if (wanted.length < 3 && previous >= 0) wanted.add(previous);
-      if (next >= widget.videos.length && previous < 0) break;
-    }
-    return wanted;
-  }
-
-  Future<void> _activate(int index) async {
-    await _ensureWindow(index);
-    for (final entry in _controllers.entries) {
-      if (entry.key == index) {
-        await entry.value.play();
-      } else {
-        await entry.value.pause();
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    for (final controller in _controllers.values) {
-      controller.dispose();
-    }
-    super.dispose();
+    if (mounted) setState(() => _feedOpen = false);
   }
 
   @override
@@ -104,80 +79,161 @@ class _PooledPostListPageState extends State<PooledPostListPage> {
       appBar: AppBar(title: const Text('Post 列表')),
       body: ListView.builder(
         itemCount: widget.videos.length,
-        itemBuilder: (context, index) => GestureDetector(
-          onTap: () async {
-            await _activate(index);
-            if (!context.mounted) return;
-            await Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => _PooledVerticalFeedPage(
-                  videos: widget.videos,
-                  controllers: _controllers,
-                  initialPage: index,
-                  ensureWindow: _ensureWindow,
-                ),
-              ),
-            );
-            if (mounted) setState(() {});
-          },
-          child: SizedBox(
-            height: 280,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                if (_controllers[index] case final controller?)
-                  VerticalVideoPlayer(controller: controller)
-                else
-                  const ColoredBox(color: Color(0xff202020)),
-                Positioned(
-                  left: 16,
-                  bottom: 16,
-                  child: Text('视频 ${index + 1} · 点击进入竖屏'),
-                ),
-              ],
-            ),
-          ),
+        itemBuilder: (context, index) => PostVideoItem(
+          key: _keyFor(index),
+          source: widget.videos[index],
+          index: index,
+          enabled: !_feedOpen,
+          autoPlay: index == 0,
+          onOpen: () => _openFeed(index),
         ),
       ),
     );
   }
 }
 
-class _PooledVerticalFeedPage extends StatefulWidget {
-  const _PooledVerticalFeedPage({
+/// One post cell owns exactly one controller lease while [enabled].
+class PostVideoItem extends StatefulWidget {
+  const PostVideoItem({
+    required this.source,
+    required this.index,
+    required this.enabled,
+    required this.autoPlay,
+    required this.onOpen,
+    super.key,
+  });
+
+  final HlsVideoSource source;
+  final int index;
+  final bool enabled;
+  final bool autoPlay;
+  final VoidCallback onOpen;
+
+  @override
+  State<PostVideoItem> createState() => PostVideoItemState();
+}
+
+class PostVideoItemState extends State<PostVideoItem> {
+  VerticalVideoController? _controller;
+  Future<void>? _pendingRelease;
+  Object? _error;
+  int _generation = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.enabled) _acquire();
+  }
+
+  @override
+  void didUpdateWidget(PostVideoItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.source.cacheKey != widget.source.cacheKey) {
+      releaseController().then((_) {
+        if (mounted && widget.enabled) _acquire();
+      });
+    } else if (!oldWidget.enabled && widget.enabled) {
+      _acquire();
+    } else if (oldWidget.enabled && !widget.enabled) {
+      releaseController();
+    }
+  }
+
+  Future<void> _acquire() async {
+    if (_controller != null || !widget.enabled) return;
+    final generation = ++_generation;
+    try {
+      final controller = await VerticalVideoPool.acquire(
+        widget.source,
+        autoPlay: widget.autoPlay,
+      );
+      if (!mounted || !widget.enabled || generation != _generation) {
+        await controller.release();
+        return;
+      }
+      setState(() => _controller = controller);
+    } catch (error) {
+      if (mounted && generation == _generation) {
+        setState(() => _error = error);
+      }
+    }
+  }
+
+  Future<void> releaseController() async {
+    if (_pendingRelease case final pending?) {
+      await pending;
+      return;
+    }
+    _generation++;
+    final controller = _controller;
+    _controller = null;
+    if (mounted) setState(() {});
+    if (controller == null) return;
+    final release = controller.release();
+    _pendingRelease = release;
+    try {
+      await release;
+    } finally {
+      if (identical(_pendingRelease, release)) _pendingRelease = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _generation++;
+    _controller?.dispose();
+    _controller = null;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: widget.onOpen,
+      child: SizedBox(
+        height: 280,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (_controller case final controller?)
+              VerticalVideoPlayer(controller: controller)
+            else
+              const ColoredBox(color: Color(0xff202020)),
+            if (_error != null)
+              Center(child: Text('播放器初始化失败：$_error')),
+            Positioned(
+              left: 16,
+              bottom: 16,
+              child: Text('视频 ${widget.index + 1} · 点击进入竖屏'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The feed only owns the current index. Each PageView child independently
+/// creates and disposes its native controller.
+class VerticalFeedPage extends StatefulWidget {
+  const VerticalFeedPage({
     required this.videos,
-    required this.controllers,
     required this.initialPage,
-    required this.ensureWindow,
+    super.key,
   });
 
   final List<HlsVideoSource> videos;
-  final Map<int, VerticalVideoController> controllers;
   final int initialPage;
-  final Future<void> Function(int index) ensureWindow;
 
   @override
-  State<_PooledVerticalFeedPage> createState() =>
-      _PooledVerticalFeedPageState();
+  State<VerticalFeedPage> createState() => _VerticalFeedPageState();
 }
 
-class _PooledVerticalFeedPageState
-    extends State<_PooledVerticalFeedPage> {
+class _VerticalFeedPageState extends State<VerticalFeedPage> {
   late final PageController _pageController = PageController(
     initialPage: widget.initialPage,
   );
-
-  Future<void> _activate(int index) async {
-    await widget.ensureWindow(index);
-    for (final entry in widget.controllers.entries) {
-      if (entry.key == index) {
-        await entry.value.play();
-      } else {
-        await entry.value.pause();
-      }
-    }
-    if (mounted) setState(() {});
-  }
+  late int _currentIndex = widget.initialPage;
 
   @override
   void dispose() {
@@ -191,34 +247,133 @@ class _PooledVerticalFeedPageState
       body: PageView.builder(
         controller: _pageController,
         scrollDirection: Axis.vertical,
+        allowImplicitScrolling: true,
         itemCount: widget.videos.length,
-        onPageChanged: _activate,
-        itemBuilder: (context, index) {
-          final controller = widget.controllers[index];
-          return Stack(
-            fit: StackFit.expand,
-            children: [
-              if (controller != null)
-                VerticalVideoPlayer(controller: controller)
-              else
-                const ColoredBox(
-                  color: Colors.black,
-                  child: Center(child: CircularProgressIndicator()),
-                ),
-              Positioned(
-                left: 16,
-                right: 16,
-                bottom: 40,
-                child: Text(
-                  '视频 ${index + 1}\n'
-                  'cacheKey: ${widget.videos[index].cacheKey}',
-                  style: const TextStyle(fontSize: 18),
-                ),
-              ),
-            ],
-          );
-        },
+        onPageChanged: (index) => setState(() => _currentIndex = index),
+        itemBuilder: (context, index) => VerticalFeedVideoItem(
+          key: ValueKey(widget.videos[index].cacheKey),
+          source: widget.videos[index],
+          index: index,
+          shouldPlay: index == _currentIndex,
+        ),
       ),
+    );
+  }
+}
+
+/// One PageView child owns one controller from initState through dispose.
+///
+/// PageView.builder normally keeps the current and adjacent children mounted,
+/// which naturally prepares a small player window without a controller map in
+/// the parent page.
+class VerticalFeedVideoItem extends StatefulWidget {
+  const VerticalFeedVideoItem({
+    required this.source,
+    required this.index,
+    required this.shouldPlay,
+    super.key,
+  });
+
+  final HlsVideoSource source;
+  final int index;
+  final bool shouldPlay;
+
+  @override
+  State<VerticalFeedVideoItem> createState() => _VerticalFeedVideoItemState();
+}
+
+class _VerticalFeedVideoItemState extends State<VerticalFeedVideoItem> {
+  VerticalVideoController? _controller;
+  Object? _error;
+  int _generation = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _acquire();
+  }
+
+  @override
+  void didUpdateWidget(VerticalFeedVideoItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.source.cacheKey != widget.source.cacheKey) {
+      _replaceSource();
+    } else if (oldWidget.shouldPlay != widget.shouldPlay) {
+      _applyPlaybackState();
+    }
+  }
+
+  Future<void> _acquire() async {
+    final generation = ++_generation;
+    try {
+      final controller = await VerticalVideoPool.acquire(
+        widget.source,
+        autoPlay: widget.shouldPlay,
+      );
+      if (!mounted || generation != _generation) {
+        await controller.release();
+        return;
+      }
+      _controller = controller;
+      await _applyPlaybackState();
+      if (mounted) setState(() {});
+    } catch (error) {
+      if (mounted && generation == _generation) {
+        setState(() => _error = error);
+      }
+    }
+  }
+
+  Future<void> _replaceSource() async {
+    _generation++;
+    final previous = _controller;
+    _controller = null;
+    if (previous != null) await previous.release();
+    if (mounted) await _acquire();
+  }
+
+  Future<void> _applyPlaybackState() async {
+    final controller = _controller;
+    if (controller == null) return;
+    if (widget.shouldPlay) {
+      await controller.play();
+    } else {
+      await controller.pause();
+    }
+  }
+
+  @override
+  void dispose() {
+    _generation++;
+    _controller?.dispose();
+    _controller = null;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (_controller case final controller?)
+          VerticalVideoPlayer(controller: controller)
+        else
+          const ColoredBox(
+            color: Colors.black,
+            child: Center(child: CircularProgressIndicator()),
+          ),
+        if (_error != null)
+          Center(child: Text('播放器初始化失败：$_error')),
+        Positioned(
+          left: 16,
+          right: 16,
+          bottom: 40,
+          child: Text(
+            '视频 ${widget.index + 1}\ncacheKey: ${widget.source.cacheKey}',
+            style: const TextStyle(fontSize: 18),
+          ),
+        ),
+      ],
     );
   }
 }
