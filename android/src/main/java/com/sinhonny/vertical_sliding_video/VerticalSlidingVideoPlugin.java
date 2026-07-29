@@ -223,6 +223,7 @@ public final class VerticalSlidingVideoPlugin
     private SimpleCache disk;
     private int maxPlayers = 3;
     private int nextId = 1;
+    private long configuredDiskBytes = 768L * 1024 * 1024;
 
     VideoEngine(Context context, EventEmitter emitter) {
       this.context = context;
@@ -230,13 +231,25 @@ public final class VerticalSlidingVideoPlugin
     }
 
     synchronized void configure(int players, long memoryBytes, long diskBytes) {
+      int normalizedPlayers = Math.max(1, players);
+      long normalizedMemoryBytes = Math.max(1024 * 1024, memoryBytes);
+      long normalizedDiskBytes = Math.max(16L * 1024 * 1024, diskBytes);
       if (disk != null) {
-        throw new IllegalStateException("configure must be called before preload/acquire");
+        // A Flutter hot restart recreates Dart static state without recreating
+        // this native engine. Treat the repeated configuration as idempotent.
+        if (configuredDiskBytes != normalizedDiskBytes) {
+          throw new IllegalStateException(
+              "diskCacheBytes cannot be changed after preload/acquire");
+        }
+        maxPlayers = normalizedPlayers;
+        memory.setMaxBytes(normalizedMemoryBytes);
+        return;
       }
-      maxPlayers = Math.max(1, players);
-      memory.setMaxBytes(Math.max(1024 * 1024, memoryBytes));
+      maxPlayers = normalizedPlayers;
+      memory.setMaxBytes(normalizedMemoryBytes);
+      configuredDiskBytes = normalizedDiskBytes;
       disk = new SimpleCache(new File(context.getCacheDir(), "vertical_sliding_video"),
-          new LeastRecentlyUsedCacheEvictor(Math.max(16L * 1024 * 1024, diskBytes)));
+          new LeastRecentlyUsedCacheEvictor(configuredDiskBytes));
     }
 
     synchronized int acquire(
@@ -406,7 +419,7 @@ public final class VerticalSlidingVideoPlugin
     private synchronized void ensureDiskCache() {
       if (disk == null) {
         disk = new SimpleCache(new File(context.getCacheDir(), "vertical_sliding_video"),
-            new LeastRecentlyUsedCacheEvictor(768L * 1024 * 1024));
+            new LeastRecentlyUsedCacheEvictor(configuredDiskBytes));
       }
     }
   }
