@@ -4,12 +4,13 @@ import android.content.Context;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
-import android.view.View;
+import android.view.Surface;
 
 import androidx.annotation.NonNull;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
+import androidx.media3.common.VideoSize;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DataSource;
 import androidx.media3.datasource.DataSpec;
@@ -21,8 +22,6 @@ import androidx.media3.datasource.cache.SimpleCache;
 import androidx.media3.datasource.okhttp.OkHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.hls.HlsMediaSource;
-import androidx.media3.ui.AspectRatioFrameLayout;
-import androidx.media3.ui.PlayerView;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
@@ -43,9 +42,7 @@ import io.flutter.embedding.engine.plugins.FlutterPlugin;
 import io.flutter.plugin.common.EventChannel;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
-import io.flutter.plugin.common.StandardMessageCodec;
-import io.flutter.plugin.platform.PlatformView;
-import io.flutter.plugin.platform.PlatformViewFactory;
+import io.flutter.view.TextureRegistry;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
@@ -62,13 +59,12 @@ public final class VerticalSlidingVideoPlugin
 
   @Override
   public void onAttachedToEngine(@NonNull FlutterPluginBinding binding) {
-    engine = new VideoEngine(binding.getApplicationContext(), this::emit);
+    engine = new VideoEngine(
+        binding.getApplicationContext(), binding.getTextureRegistry(), this::emit);
     methods = new MethodChannel(binding.getBinaryMessenger(), "vertical_sliding_video/methods");
     methods.setMethodCallHandler(this);
     events = new EventChannel(binding.getBinaryMessenger(), "vertical_sliding_video/events");
     events.setStreamHandler(this);
-    binding.getPlatformViewRegistry().registerViewFactory(
-        "vertical_sliding_video/view", new VideoViewFactory(engine));
   }
 
   @Override
@@ -91,8 +87,12 @@ public final class VerticalSlidingVideoPlugin
                   () -> result.error("preload", error.getMessage(), null)));
           break;
         case "acquire":
-          result.success(engine.acquire(required(call, "cacheKey"), required(call, "url"),
-              headers(call), Boolean.TRUE.equals(call.argument("autoPlay"))));
+          int playerId = engine.acquire(required(call, "cacheKey"), required(call, "url"),
+              headers(call), Boolean.TRUE.equals(call.argument("autoPlay")));
+          Map<String, Object> acquired = new LinkedHashMap<>();
+          acquired.put("playerId", playerId);
+          acquired.put("textureId", engine.textureId(playerId));
+          result.success(acquired);
           break;
         case "play":
           engine.player(number(call, "playerId", -1).intValue()).play();
@@ -172,61 +172,42 @@ public final class VerticalSlidingVideoPlugin
 
   private interface EventEmitter { void emit(Map<String, Object> event); }
 
-  private static final class VideoViewFactory extends PlatformViewFactory {
-    private final VideoEngine engine;
-    VideoViewFactory(VideoEngine engine) {
-      super(StandardMessageCodec.INSTANCE);
-      this.engine = engine;
-    }
-    @Override public PlatformView create(Context context, int viewId, Object args) {
-      if (!(args instanceof Map) || !(((Map<?, ?>) args).get("playerId") instanceof Number)) {
-        throw new IllegalArgumentException("playerId is required");
-      }
-      return new VideoPlatformView(
-          context, engine, ((Number) ((Map<?, ?>) args).get("playerId")).intValue());
-    }
-  }
-
-  private static final class VideoPlatformView implements PlatformView {
-    private final PlayerView view;
-    private final VideoEngine engine;
-    private final int playerId;
-    VideoPlatformView(Context context, VideoEngine engine, int playerId) {
-      this.engine = engine;
-      this.playerId = playerId;
-      view = new PlayerView(context);
-      view.setUseController(false);
-      view.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM);
-      engine.attachView(playerId, view);
-    }
-    @Override public View getView() { return view; }
-    @Override public void dispose() { engine.detachView(playerId, view); }
-  }
-
   private static final class PlayerSlot {
     final int id;
     final ExoPlayer player;
+    final TextureRegistry.SurfaceTextureEntry texture;
+    final Surface surface;
     String cacheKey;
     int leases;
     long lastUsed;
-    PlayerSlot(int id, ExoPlayer player) { this.id = id; this.player = player; }
+    PlayerSlot(
+        int id,
+        ExoPlayer player,
+        TextureRegistry.SurfaceTextureEntry texture,
+        Surface surface) {
+      this.id = id;
+      this.player = player;
+      this.texture = texture;
+      this.surface = surface;
+    }
   }
 
   private static final class VideoEngine {
     private final Context context;
+    private final TextureRegistry textures;
     private final EventEmitter emitter;
     private final OkHttpClient http = new OkHttpClient();
     private final ExecutorService workers = Executors.newFixedThreadPool(2);
     private final Map<Integer, PlayerSlot> slots = new LinkedHashMap<>();
-    private final Map<Integer, List<PlayerView>> attachedViews = new LinkedHashMap<>();
     private final MemoryStore memory = new MemoryStore(48L * 1024 * 1024);
     private SimpleCache disk;
     private int maxPlayers = 3;
     private int nextId = 1;
     private long configuredDiskBytes = 768L * 1024 * 1024;
 
-    VideoEngine(Context context, EventEmitter emitter) {
+    VideoEngine(Context context, TextureRegistry textures, EventEmitter emitter) {
       this.context = context;
+      this.textures = textures;
       this.emitter = emitter;
     }
 
@@ -270,7 +251,6 @@ public final class VerticalSlidingVideoPlugin
         slot.player.prepare();
       }
       if (autoPlay) slot.player.play();
-      preload(cacheKey, url, headers, () -> {}, ignored -> {});
       return slot.id;
     }
 
@@ -280,7 +260,11 @@ public final class VerticalSlidingVideoPlugin
       for (PlayerSlot slot : slots.values()) {
         if (slot.leases == 0 && (oldest == null || slot.lastUsed < oldest.lastUsed)) oldest = slot;
       }
-      if (oldest == null) throw new IllegalStateException("all player pool entries are leased");
+      // maxPlayers is the number of players retained by the warm pool, not a
+      // hard acquire limit. Flutter scrollables can transiently keep more
+      // children mounted than their visible/preload window. Let those leases
+      // use overflow players and discard them as soon as they become idle.
+      if (oldest == null) return createSlot();
       oldest.player.stop();
       oldest.player.clearMediaItems();
       return oldest;
@@ -289,10 +273,19 @@ public final class VerticalSlidingVideoPlugin
     private PlayerSlot createSlot() {
       int id = nextId++;
       ExoPlayer player = new ExoPlayer.Builder(context).build();
-      PlayerSlot slot = new PlayerSlot(id, player);
+      TextureRegistry.SurfaceTextureEntry texture = textures.createSurfaceTexture();
+      Surface surface = new Surface(texture.surfaceTexture());
+      player.setVideoSurface(surface);
+      PlayerSlot slot = new PlayerSlot(id, player, texture, surface);
       player.addListener(new Player.Listener() {
         @Override public void onPlaybackStateChanged(int state) { emitState(id, player); }
         @Override public void onIsPlayingChanged(boolean playing) { emitState(id, player); }
+        @Override public void onVideoSizeChanged(VideoSize size) {
+          if (size.width > 0 && size.height > 0) {
+            texture.surfaceTexture().setDefaultBufferSize(size.width, size.height);
+          }
+          emitState(id, player);
+        }
         @Override public void onPlayerError(PlaybackException error) {
           Map<String, Object> event = event(id, "error");
           event.put("message", error.getMessage());
@@ -303,6 +296,12 @@ public final class VerticalSlidingVideoPlugin
       return slot;
     }
 
+    synchronized long textureId(int id) {
+      PlayerSlot slot = slots.get(id);
+      if (slot == null) throw new IllegalArgumentException("unknown playerId " + id);
+      return slot.texture.id();
+    }
+
     private void emitState(int id, ExoPlayer player) {
       Map<String, Object> event = event(id, "state");
       event.put("playbackState", player.getPlaybackState());
@@ -310,6 +309,8 @@ public final class VerticalSlidingVideoPlugin
       event.put("positionMs", player.getCurrentPosition());
       event.put("durationMs", Math.max(0, player.getDuration()));
       event.put("bufferedPositionMs", player.getBufferedPosition());
+      event.put("videoWidth", player.getVideoSize().width);
+      event.put("videoHeight", player.getVideoSize().height);
       emitter.emit(event);
     }
 
@@ -327,36 +328,21 @@ public final class VerticalSlidingVideoPlugin
       return slot.player;
     }
 
-    synchronized void attachView(int id, PlayerView view) {
-      ExoPlayer player = player(id);
-      List<PlayerView> views = attachedViews.computeIfAbsent(id, ignored -> new ArrayList<>());
-      PlayerView previous = views.isEmpty() ? null : views.get(views.size() - 1);
-      views.remove(view);
-      views.add(view);
-      PlayerView.switchTargetView(player, previous, view);
-    }
-
-    synchronized void detachView(int id, PlayerView view) {
-      List<PlayerView> views = attachedViews.get(id);
-      if (views == null) return;
-      boolean wasCurrent = !views.isEmpty() && views.get(views.size() - 1) == view;
-      views.remove(view);
-      if (wasCurrent) {
-        PlayerSlot slot = slots.get(id);
-        PlayerView target = views.isEmpty() ? null : views.get(views.size() - 1);
-        if (slot != null) PlayerView.switchTargetView(slot.player, view, target);
-      } else {
-        view.setPlayer(null);
-      }
-      if (views.isEmpty()) attachedViews.remove(id);
-    }
-
     synchronized void releaseLease(int id) {
       PlayerSlot slot = slots.get(id);
       if (slot == null) return;
       slot.leases = Math.max(0, slot.leases - 1);
       slot.lastUsed = System.nanoTime();
-      if (slot.leases == 0) slot.player.pause();
+      if (slot.leases != 0) return;
+      slot.player.pause();
+      if (slots.size() > maxPlayers) discardSlot(slot);
+    }
+
+    private void discardSlot(PlayerSlot slot) {
+      slots.remove(slot.id);
+      slot.player.release();
+      slot.surface.release();
+      slot.texture.release();
     }
 
     void preload(
@@ -406,9 +392,12 @@ public final class VerticalSlidingVideoPlugin
     }
 
     synchronized void dispose() {
-      for (PlayerSlot slot : slots.values()) slot.player.release();
+      for (PlayerSlot slot : slots.values()) {
+        slot.player.release();
+        slot.surface.release();
+        slot.texture.release();
+      }
       slots.clear();
-      attachedViews.clear();
       workers.shutdownNow();
       if (disk != null) {
         try { disk.release(); } catch (Exception ignored) {}

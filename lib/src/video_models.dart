@@ -7,18 +7,18 @@ class HlsVideoSource {
     required this.cacheKey,
     required this.url,
     this.headers = const <String, String>{},
-  }) : assert(cacheKey != ''),
-       assert(url != '');
+  })  : assert(cacheKey != ''),
+        assert(url != '');
 
   final String cacheKey;
   final String url;
   final Map<String, String> headers;
 
   Map<String, Object> toMessage() => <String, Object>{
-    'cacheKey': cacheKey,
-    'url': url,
-    'headers': headers,
-  };
+        'cacheKey': cacheKey,
+        'url': url,
+        'headers': headers,
+      };
 }
 
 enum VideoPlaybackState { idle, buffering, ready, ended }
@@ -30,6 +30,8 @@ class VideoPlayerValue {
     this.position = Duration.zero,
     this.duration = Duration.zero,
     this.bufferedPosition = Duration.zero,
+    this.videoWidth = 0,
+    this.videoHeight = 0,
     this.error,
   });
 
@@ -38,6 +40,8 @@ class VideoPlayerValue {
   final Duration position;
   final Duration duration;
   final Duration bufferedPosition;
+  final int videoWidth;
+  final int videoHeight;
   final String? error;
 
   VideoPlayerValue copyWith({
@@ -46,13 +50,18 @@ class VideoPlayerValue {
     Duration? position,
     Duration? duration,
     Duration? bufferedPosition,
+    int? videoWidth,
+    int? videoHeight,
     String? error,
-  }) => VideoPlayerValue(
-    playbackState: playbackState ?? this.playbackState,
-    isPlaying: isPlaying ?? this.isPlaying,
-    position: position ?? this.position,
-    duration: duration ?? this.duration,
-    bufferedPosition: bufferedPosition ?? this.bufferedPosition,
-    error: error,
-  );
+  }) =>
+      VideoPlayerValue(
+        playbackState: playbackState ?? this.playbackState,
+        isPlaying: isPlaying ?? this.isPlaying,
+        position: position ?? this.position,
+        duration: duration ?? this.duration,
+        bufferedPosition: bufferedPosition ?? this.bufferedPosition,
+        videoWidth: videoWidth ?? this.videoWidth,
+        videoHeight: videoHeight ?? this.videoHeight,
+        error: error,
+      );
 }

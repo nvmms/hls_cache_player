@@ -8,8 +8,8 @@ import 'video_models.dart';
 /// A lease on one native player. The same controller can be rendered by
 /// different routes; do not dispose it during the route hand-off.
 class VerticalVideoController extends ValueNotifier<VideoPlayerValue> {
-  VerticalVideoController.internal(this.playerId, this.source)
-    : super(const VideoPlayerValue()) {
+  VerticalVideoController.internal(this.playerId, this.source, this.textureId)
+      : super(const VideoPlayerValue()) {
     _events = NativeVideoBridge.eventStream
         .where((event) => event['playerId'] == playerId)
         .listen(_onEvent);
@@ -17,6 +17,7 @@ class VerticalVideoController extends ValueNotifier<VideoPlayerValue> {
 
   final int playerId;
   final HlsVideoSource source;
+  final int? textureId;
   late final StreamSubscription<Map<Object?, Object?>> _events;
   bool _disposed = false;
 
@@ -60,6 +61,8 @@ class VerticalVideoController extends ValueNotifier<VideoPlayerValue> {
       bufferedPosition: Duration(
         milliseconds: (event['bufferedPositionMs'] as num?)?.toInt() ?? 0,
       ),
+      videoWidth: (event['videoWidth'] as num?)?.toInt() ?? 0,
+      videoHeight: (event['videoHeight'] as num?)?.toInt() ?? 0,
     );
   }
 

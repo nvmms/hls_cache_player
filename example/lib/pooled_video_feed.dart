@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:preload_page_view/preload_page_view.dart';
 import 'package:vertical_sliding_video/vertical_sliding_video.dart';
 
 /// The list owns no video controllers. Every visible post item independently
@@ -244,10 +245,11 @@ class _VerticalFeedPageState extends State<VerticalFeedPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: PageView.builder(
-        controller: _pageController,
+      body: PreloadPageView.builder(
+        // controller: _pageController,
         scrollDirection: Axis.vertical,
-        allowImplicitScrolling: true,
+        preloadPagesCount: 1,
+        // allowImplicitScrolling: true,
         itemCount: widget.videos.length,
         onPageChanged: (index) => setState(() => _currentIndex = index),
         itemBuilder: (context, index) => VerticalFeedVideoItem(

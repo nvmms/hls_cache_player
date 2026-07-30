@@ -33,4 +33,25 @@ void main() {
     expect(calls.last.method, 'preload');
     expect((calls.last.arguments as Map)['cacheKey'], 'custom-key');
   });
+
+  test('pool accepts an Android texture acquire response', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          calls.add(call);
+          if (call.method == 'acquire') {
+            return <String, Object>{'playerId': 7, 'textureId': 11};
+          }
+          return null;
+        });
+
+    const source = HlsVideoSource(
+      cacheKey: 'texture-key',
+      url: 'https://example.com/texture.m3u8',
+    );
+    final controller = await VerticalVideoPool.acquire(source);
+
+    expect(controller.playerId, 7);
+    expect(controller.textureId, 11);
+    await controller.release();
+  });
 }

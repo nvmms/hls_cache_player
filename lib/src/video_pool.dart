@@ -9,6 +9,10 @@ class VerticalVideoPool {
   static bool _configured = false;
 
   static Future<void> configure({
+    /// Number of idle native players retained for fast reuse.
+    ///
+    /// Active leases may temporarily exceed this value. Overflow players are
+    /// released instead of being retained when their final lease ends.
     int maxPlayers = 3,
     int memoryCacheBytes = 48 * 1024 * 1024,
     int diskCacheBytes = 768 * 1024 * 1024,
@@ -44,12 +48,24 @@ class VerticalVideoPool {
     bool looping = true,
   }) async {
     await _ensureConfigured();
-    final id = await NativeVideoBridge.methods.invokeMethod<int>('acquire', {
-      ...source.toMessage(),
-      'autoPlay': autoPlay,
-    });
+    final acquired = await NativeVideoBridge.methods.invokeMethod<Object?>(
+      'acquire',
+      {
+        ...source.toMessage(),
+        'autoPlay': autoPlay,
+      },
+    );
+    final int? id;
+    final int? textureId;
+    if (acquired is Map) {
+      id = (acquired['playerId'] as num?)?.toInt();
+      textureId = (acquired['textureId'] as num?)?.toInt();
+    } else {
+      id = (acquired as num?)?.toInt();
+      textureId = null;
+    }
     if (id == null) throw StateError('Native player did not return an id.');
-    final controller = VerticalVideoController.internal(id, source);
+    final controller = VerticalVideoController.internal(id, source, textureId);
     if (looping) await controller.setLooping(true);
     return controller;
   }

@@ -21,25 +21,59 @@ class VerticalVideoPlayer extends StatelessWidget {
       'fit': fit.name,
     };
     return switch (defaultTargetPlatform) {
-      TargetPlatform.android => AndroidView(
-        viewType: 'vertical_sliding_video/view',
-        creationParams: creationParams,
-        creationParamsCodec: const StandardMessageCodec(),
-      ),
+      TargetPlatform.android => _AndroidTexturePlayer(
+          controller: controller,
+          fit: fit,
+        ),
       TargetPlatform.iOS => UiKitView(
-        viewType: 'vertical_sliding_video/view',
-        creationParams: creationParams,
-        creationParamsCodec: const StandardMessageCodec(),
-      ),
+          viewType: 'vertical_sliding_video/view',
+          creationParams: creationParams,
+          creationParamsCodec: const StandardMessageCodec(),
+        ),
       _ => const ColoredBox(
-        color: Colors.black,
-        child: Center(
-          child: Text(
-            'vertical_sliding_video supports Android and iOS.',
-            style: TextStyle(color: Colors.white),
+          color: Colors.black,
+          child: Center(
+            child: Text(
+              'vertical_sliding_video supports Android and iOS.',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
         ),
-      ),
     };
+  }
+}
+
+class _AndroidTexturePlayer extends StatelessWidget {
+  const _AndroidTexturePlayer({required this.controller, required this.fit});
+
+  final VerticalVideoController controller;
+  final BoxFit fit;
+
+  @override
+  Widget build(BuildContext context) {
+    final textureId = controller.textureId;
+    if (textureId == null) return const ColoredBox(color: Colors.black);
+    return ColoredBox(
+      color: Colors.black,
+      child: ClipRect(
+        child: ValueListenableBuilder(
+          valueListenable: controller,
+          builder: (context, value, child) {
+            if (value.videoWidth <= 0 || value.videoHeight <= 0) {
+              return Texture(textureId: textureId);
+            }
+            return FittedBox(
+              fit: fit,
+              clipBehavior: Clip.hardEdge,
+              child: SizedBox(
+                width: value.videoWidth.toDouble(),
+                height: value.videoHeight.toDouble(),
+                child: Texture(textureId: textureId),
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 }

@@ -107,7 +107,6 @@ final class IOSVideoEngine {
     installObservers(slot, item: item)
 
     if autoPlay { slot.player.play() }
-    preload(source) { _ in }
     return slot.id
   }
 
@@ -142,7 +141,21 @@ final class IOSVideoEngine {
     guard let slot = slots[id] else { return }
     slot.leases = max(0, slot.leases - 1)
     slot.lastUsed = Date()
-    if slot.leases == 0 { slot.player.pause() }
+    guard slot.leases == 0 else { return }
+    slot.player.pause()
+    if slots.count > maxPlayers { discardSlot(slot) }
+  }
+
+  private func discardSlot(_ slot: IOSPlayerSlot) {
+    removeObservers(slot)
+    slot.resourceLoader?.cancelAll()
+    slot.resourceLoader = nil
+    slot.player.replaceCurrentItem(with: nil)
+    for view in liveViews(slot.id) {
+      view.playerLayer.player = nil
+    }
+    attachedViews.removeValue(forKey: slot.id)
+    slots.removeValue(forKey: slot.id)
   }
 
   func attachView(_ id: Int, view: IOSPlayerContainerView) throws {
@@ -195,7 +208,14 @@ final class IOSVideoEngine {
       .filter({ $0.leases == 0 })
       .min(by: { $0.lastUsed < $1.lastUsed })
     else {
-      throw IOSVideoError.poolExhausted
+      // maxPlayers controls the warm players retained by the pool. A Flutter
+      // scrollable may transiently mount more children than that, so create an
+      // overflow player instead of failing the visible video's acquire. The
+      // overflow is discarded when its final lease is released.
+      let slot = IOSPlayerSlot(id: nextPlayerId)
+      nextPlayerId += 1
+      slots[slot.id] = slot
+      return slot
     }
     removeObservers(slot)
     slot.player.pause()
