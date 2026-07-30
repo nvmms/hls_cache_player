@@ -38,10 +38,7 @@ class _PooledPostListPageState extends State<PooledPostListPage> {
   }
 
   GlobalKey<PostVideoItemState> _keyFor(int index) {
-    return _itemKeys.putIfAbsent(
-      index,
-      () => GlobalKey<PostVideoItemState>(),
-    );
+    return _itemKeys.putIfAbsent(index, () => GlobalKey<PostVideoItemState>());
   }
 
   Future<void> _openFeed(int index) async {
@@ -58,10 +55,8 @@ class _PooledPostListPageState extends State<PooledPostListPage> {
 
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => VerticalFeedPage(
-          videos: widget.videos,
-          initialPage: index,
-        ),
+        builder: (_) =>
+            VerticalFeedPage(videos: widget.videos, initialPage: index),
       ),
     );
 
@@ -200,13 +195,19 @@ class PostVideoItemState extends State<PostVideoItem> {
               VerticalVideoPlayer(controller: controller)
             else
               const ColoredBox(color: Color(0xff202020)),
-            if (_error != null)
-              Center(child: Text('播放器初始化失败：$_error')),
+            if (_error != null) Center(child: Text('播放器初始化失败：$_error')),
             Positioned(
               left: 16,
               bottom: 16,
               child: Text('视频 ${widget.index + 1} · 点击进入竖屏'),
             ),
+            if (_controller case final controller?)
+              Positioned(
+                left: 12,
+                right: 12,
+                bottom: 0,
+                child: _VideoProgressBar(controller: controller),
+              ),
           ],
         ),
       ),
@@ -364,8 +365,7 @@ class _VerticalFeedVideoItemState extends State<VerticalFeedVideoItem> {
             color: Colors.black,
             child: Center(child: CircularProgressIndicator()),
           ),
-        if (_error != null)
-          Center(child: Text('播放器初始化失败：$_error')),
+        if (_error != null) Center(child: Text('播放器初始化失败：$_error')),
         Positioned(
           left: 16,
           right: 16,
@@ -375,7 +375,66 @@ class _VerticalFeedVideoItemState extends State<VerticalFeedVideoItem> {
             style: const TextStyle(fontSize: 18),
           ),
         ),
+        if (_controller case final controller?)
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: 8,
+            child: _VideoProgressBar(controller: controller),
+          ),
       ],
     );
+  }
+}
+
+class _VideoProgressBar extends StatelessWidget {
+  const _VideoProgressBar({required this.controller});
+
+  final VerticalVideoController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<VideoPlayerValue>(
+      stream: controller.states,
+      initialData: controller.value,
+      builder: (context, snapshot) {
+        final value = snapshot.data ?? controller.value;
+        final durationMs = value.duration.inMilliseconds;
+        final positionMs = value.position.inMilliseconds.clamp(0, durationMs);
+
+        return Row(
+          children: [
+            Text(
+              _formatDuration(value.position),
+              style: const TextStyle(fontSize: 11),
+            ),
+            Expanded(
+              child: Slider(
+                min: 0,
+                max: durationMs > 0 ? durationMs.toDouble() : 1,
+                value: positionMs.toDouble(),
+                onChanged: durationMs > 0
+                    ? (milliseconds) {
+                        controller.seekTo(
+                          Duration(milliseconds: milliseconds.round()),
+                        );
+                      }
+                    : null,
+              ),
+            ),
+            Text(
+              _formatDuration(value.duration),
+              style: const TextStyle(fontSize: 11),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  String _formatDuration(Duration duration) {
+    final minutes = duration.inMinutes;
+    final seconds = duration.inSeconds.remainder(60);
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 }

@@ -137,6 +137,10 @@ final class IOSVideoEngine {
     slot.looping = looping
   }
 
+  func state(_ id: Int) throws -> [String: Any] {
+    state(try playerSlot(id))
+  }
+
   func releaseLease(_ id: Int) {
     guard let slot = slots[id] else { return }
     slot.leases = max(0, slot.leases - 1)
@@ -294,6 +298,13 @@ final class IOSVideoEngine {
   }
 
   private func emitState(_ slot: IOSPlayerSlot, ended: Bool = false) {
+    emit(state(slot, ended: ended))
+  }
+
+  private func state(
+    _ slot: IOSPlayerSlot,
+    ended: Bool = false
+  ) -> [String: Any] {
     let item = slot.player.currentItem
     let playbackState: Int
     if ended {
@@ -305,7 +316,8 @@ final class IOSVideoEngine {
     } else {
       playbackState = 1
     }
-    emit([
+    let dimensions = item?.presentationSize ?? .zero
+    return [
       "playerId": slot.id,
       "type": "state",
       "playbackState": playbackState,
@@ -315,7 +327,9 @@ final class IOSVideoEngine {
       "bufferedPositionMs": milliseconds(
         item?.loadedTimeRanges.last?.timeRangeValue.end ?? .zero
       ),
-    ])
+      "videoWidth": Int(dimensions.width),
+      "videoHeight": Int(dimensions.height),
+    ]
   }
 
   private func emitError(_ slot: IOSPlayerSlot, _ error: Error?) {

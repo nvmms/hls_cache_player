@@ -113,6 +113,9 @@ public final class VerticalSlidingVideoPlugin
                   ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
           result.success(null);
           break;
+        case "getState":
+          result.success(engine.state(number(call, "playerId", -1).intValue()));
+          break;
         case "release":
           engine.releaseLease(number(call, "playerId", -1).intValue());
           result.success(null);
@@ -193,6 +196,7 @@ public final class VerticalSlidingVideoPlugin
   }
 
   private static final class VideoEngine {
+    private static final long PROGRESS_INTERVAL_MS = 250;
     private final Context context;
     private final TextureRegistry textures;
     private final EventEmitter emitter;
@@ -204,6 +208,21 @@ public final class VerticalSlidingVideoPlugin
     private int maxPlayers = 3;
     private int nextId = 1;
     private long configuredDiskBytes = 768L * 1024 * 1024;
+    private final Handler progressHandler = new Handler(Looper.getMainLooper());
+    private boolean progressScheduled;
+    private final Runnable progressTicker = new Runnable() {
+      @Override public void run() {
+        progressScheduled = false;
+        boolean hasPlayingPlayer = false;
+        for (PlayerSlot slot : slots.values()) {
+          if (slot.player.isPlaying()) {
+            emitState(slot.id, slot.player);
+            hasPlayingPlayer = true;
+          }
+        }
+        if (hasPlayingPlayer) scheduleProgress();
+      }
+    };
 
     VideoEngine(Context context, TextureRegistry textures, EventEmitter emitter) {
       this.context = context;
@@ -279,7 +298,16 @@ public final class VerticalSlidingVideoPlugin
       PlayerSlot slot = new PlayerSlot(id, player, texture, surface);
       player.addListener(new Player.Listener() {
         @Override public void onPlaybackStateChanged(int state) { emitState(id, player); }
-        @Override public void onIsPlayingChanged(boolean playing) { emitState(id, player); }
+        @Override public void onIsPlayingChanged(boolean playing) {
+          emitState(id, player);
+          if (playing) scheduleProgress();
+        }
+        @Override public void onPositionDiscontinuity(
+            Player.PositionInfo oldPosition,
+            Player.PositionInfo newPosition,
+            int reason) {
+          emitState(id, player);
+        }
         @Override public void onVideoSizeChanged(VideoSize size) {
           if (size.width > 0 && size.height > 0) {
             texture.surfaceTexture().setDefaultBufferSize(size.width, size.height);
@@ -303,6 +331,10 @@ public final class VerticalSlidingVideoPlugin
     }
 
     private void emitState(int id, ExoPlayer player) {
+      emitter.emit(state(id, player));
+    }
+
+    private Map<String, Object> state(int id, ExoPlayer player) {
       Map<String, Object> event = event(id, "state");
       event.put("playbackState", player.getPlaybackState());
       event.put("isPlaying", player.isPlaying());
@@ -311,7 +343,19 @@ public final class VerticalSlidingVideoPlugin
       event.put("bufferedPositionMs", player.getBufferedPosition());
       event.put("videoWidth", player.getVideoSize().width);
       event.put("videoHeight", player.getVideoSize().height);
-      emitter.emit(event);
+      return event;
+    }
+
+    synchronized Map<String, Object> state(int id) {
+      PlayerSlot slot = slots.get(id);
+      if (slot == null) throw new IllegalArgumentException("unknown playerId " + id);
+      return state(id, slot.player);
+    }
+
+    private void scheduleProgress() {
+      if (progressScheduled) return;
+      progressScheduled = true;
+      progressHandler.postDelayed(progressTicker, PROGRESS_INTERVAL_MS);
     }
 
     private static Map<String, Object> event(int id, String type) {
@@ -392,6 +436,8 @@ public final class VerticalSlidingVideoPlugin
     }
 
     synchronized void dispose() {
+      progressHandler.removeCallbacks(progressTicker);
+      progressScheduled = false;
       for (PlayerSlot slot : slots.values()) {
         slot.player.release();
         slot.surface.release();

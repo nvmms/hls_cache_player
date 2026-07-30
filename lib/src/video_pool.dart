@@ -66,6 +66,7 @@ class VerticalVideoPool {
     }
     if (id == null) throw StateError('Native player did not return an id.');
     final controller = VerticalVideoController.internal(id, source, textureId);
+    await controller.refresh();
     if (looping) await controller.setLooping(true);
     return controller;
   }

@@ -94,6 +94,9 @@ public final class VerticalSlidingVideoPlugin: NSObject, FlutterPlugin,
         )
         result(nil)
 
+      case "getState":
+        result(try engine.state(playerId(arguments)))
+
       case "release":
         engine.releaseLease(playerId(arguments))
         result(nil)

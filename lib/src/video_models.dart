@@ -23,6 +23,7 @@ class HlsVideoSource {
 
 enum VideoPlaybackState { idle, buffering, ready, ended }
 
+/// An immutable snapshot of one native player's complete observable state.
 class VideoPlayerValue {
   const VideoPlayerValue({
     this.playbackState = VideoPlaybackState.idle,
@@ -44,6 +45,14 @@ class VideoPlayerValue {
   final int videoHeight;
   final String? error;
 
+  bool get isInitialized =>
+      playbackState == VideoPlaybackState.ready ||
+      playbackState == VideoPlaybackState.ended;
+  bool get isBuffering => playbackState == VideoPlaybackState.buffering;
+  bool get isEnded => playbackState == VideoPlaybackState.ended;
+  double get aspectRatio =>
+      videoWidth > 0 && videoHeight > 0 ? videoWidth / videoHeight : 0;
+
   VideoPlayerValue copyWith({
     VideoPlaybackState? playbackState,
     bool? isPlaying,
@@ -53,6 +62,7 @@ class VideoPlayerValue {
     int? videoWidth,
     int? videoHeight,
     String? error,
+    bool clearError = false,
   }) =>
       VideoPlayerValue(
         playbackState: playbackState ?? this.playbackState,
@@ -62,6 +72,6 @@ class VideoPlayerValue {
         bufferedPosition: bufferedPosition ?? this.bufferedPosition,
         videoWidth: videoWidth ?? this.videoWidth,
         videoHeight: videoHeight ?? this.videoHeight,
-        error: error,
+        error: clearError ? null : error ?? this.error,
       );
 }

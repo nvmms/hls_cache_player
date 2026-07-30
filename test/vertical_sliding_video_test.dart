@@ -21,5 +21,27 @@ void main() {
     expect(value.playbackState, VideoPlaybackState.idle);
     expect(value.position, Duration.zero);
     expect(value.isPlaying, isFalse);
+    expect(value.isInitialized, isFalse);
+    expect(value.isBuffering, isFalse);
+    expect(value.aspectRatio, 0);
+  });
+
+  test('VideoPlayerValue exposes derived playback state', () {
+    const value = VideoPlayerValue(
+      playbackState: VideoPlaybackState.ready,
+      videoWidth: 1920,
+      videoHeight: 1080,
+    );
+
+    expect(value.isInitialized, isTrue);
+    expect(value.aspectRatio, closeTo(16 / 9, 0.0001));
+  });
+
+  test('VideoPlayerValue retains and explicitly clears errors', () {
+    const failed = VideoPlayerValue(error: 'network');
+
+    expect(
+        failed.copyWith(position: const Duration(seconds: 1)).error, 'network');
+    expect(failed.copyWith(clearError: true).error, isNull);
   });
 }
