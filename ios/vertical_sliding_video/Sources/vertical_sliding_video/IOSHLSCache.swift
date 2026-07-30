@@ -350,7 +350,7 @@ final class IOSHLSResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
     ) { [weak self, weak loadingRequest] result in
       guard let self, let loadingRequest else { return }
       self.loaderQueue.async {
-        guard !self.cancelledRequests.remove(identifier) else { return }
+        guard self.cancelledRequests.remove(identifier) == nil else { return }
         switch result {
         case .failure(let error):
           loadingRequest.finishLoading(with: error)
