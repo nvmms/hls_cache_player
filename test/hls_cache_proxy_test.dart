@@ -3,11 +3,11 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vertical_sliding_video/vertical_sliding_video.dart';
+import 'package:hls_cache_player/hls_cache_player.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  const channel = MethodChannel('vertical_sliding_video/methods');
+  const channel = MethodChannel('hls_cache_player/methods');
   late Directory cacheDirectory;
   late HttpServer upstream;
   late Map<String, int> requests;

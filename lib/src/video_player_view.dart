@@ -4,14 +4,14 @@ import 'package:flutter/services.dart';
 
 import 'video_controller.dart';
 
-class VerticalVideoPlayer extends StatelessWidget {
-  const VerticalVideoPlayer({
+class HlsPlayerView extends StatelessWidget {
+  const HlsPlayerView({
     required this.controller,
     this.fit = BoxFit.cover,
     super.key,
   });
 
-  final VerticalVideoController controller;
+  final HlsPlayerController controller;
   final BoxFit fit;
 
   @override
@@ -26,7 +26,7 @@ class VerticalVideoPlayer extends StatelessWidget {
           fit: fit,
         ),
       TargetPlatform.iOS => UiKitView(
-          viewType: 'vertical_sliding_video/view',
+          viewType: 'hls_cache_player/view',
           creationParams: creationParams,
           creationParamsCodec: const StandardMessageCodec(),
         ),
@@ -34,7 +34,7 @@ class VerticalVideoPlayer extends StatelessWidget {
           color: Colors.black,
           child: Center(
             child: Text(
-              'vertical_sliding_video supports Android and iOS.',
+              'hls_cache_player supports Android and iOS.',
               style: TextStyle(color: Colors.white),
             ),
           ),
@@ -46,7 +46,7 @@ class VerticalVideoPlayer extends StatelessWidget {
 class _AndroidTexturePlayer extends StatelessWidget {
   const _AndroidTexturePlayer({required this.controller, required this.fit});
 
-  final VerticalVideoController controller;
+  final HlsPlayerController controller;
   final BoxFit fit;
 
   @override

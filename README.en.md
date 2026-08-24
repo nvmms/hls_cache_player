@@ -1,4 +1,4 @@
-# vertical_sliding_video
+# hls_cache_player
 
 [中文](README.md) | [English](README.en.md)
 
@@ -24,8 +24,8 @@ adding the following dependency to your application's `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  vertical_sliding_video:
-    git: https://github.com/nvmms/vertical_sliding_video.git
+  hls_cache_player:
+    git: https://github.com/nvmms/hls_cache_player.git
 ```
 
 Fetch the dependency:
@@ -37,16 +37,16 @@ flutter pub get
 Import the package:
 
 ```dart
-import 'package:vertical_sliding_video/vertical_sliding_video.dart';
+import 'package:hls_cache_player/hls_cache_player.dart';
 ```
 
 For reproducible builds, replace `main` with a Git tag or commit SHA:
 
 ```yaml
 dependencies:
-  vertical_sliding_video:
+  hls_cache_player:
     git:
-      url: https://github.com/nvmms/vertical_sliding_video.git
+      url: https://github.com/nvmms/hls_cache_player.git
       ref: your-tag-or-commit-sha
 ```
 
@@ -54,8 +54,8 @@ Use a path dependency for local development:
 
 ```yaml
 dependencies:
-  vertical_sliding_video:
-    path: ../vertical_sliding_video
+  hls_cache_player:
+    path: ../hls_cache_player
 ```
 
 ## Getting started
@@ -63,7 +63,7 @@ dependencies:
 Configure the process-wide player pool:
 
 ```dart
-await VerticalVideoPool.configure(
+await HlsCachePlayerPool.configure(
   maxPlayers: 3,
   memoryCacheBytes: 48 * 1024 * 1024,
   diskCacheBytes: 768 * 1024 * 1024,
@@ -79,7 +79,7 @@ const source = HlsVideoSource(
   headers: {'Authorization': 'Bearer token'},
 );
 
-final localUrl = await VerticalVideoPool.preload(source);
+final localUrl = await HlsCachePlayerPool.preload(source);
 ```
 
 `localUrl` is a standard loopback HTTP HLS URL available within the current
@@ -87,7 +87,7 @@ app process. It can be used by this package or another HLS player:
 
 ```dart
 class VideoItemState extends State<VideoItem> {
-  VerticalVideoController? controller;
+  HlsPlayerController? controller;
 
   @override
   void initState() {
@@ -96,7 +96,7 @@ class VideoItemState extends State<VideoItem> {
   }
 
   Future<void> initializePlayer() async {
-    final value = await VerticalVideoPool.acquire(
+    final value = await HlsCachePlayerPool.acquire(
       widget.localUrl,
       autoPlay: widget.autoPlay,
     );
@@ -119,7 +119,7 @@ class VideoItemState extends State<VideoItem> {
     if (value == null) {
       return const ColoredBox(color: Colors.black);
     }
-    return VerticalVideoPlayer(controller: value);
+    return HlsPlayerView(controller: value);
   }
 }
 ```
@@ -127,7 +127,7 @@ class VideoItemState extends State<VideoItem> {
 Application widgets do not need to pass a controller between routes:
 
 ```dart
-final controller = await VerticalVideoPool.acquire(localUrl);
+final controller = await HlsCachePlayerPool.acquire(localUrl);
 ```
 
 If a player for the same `cacheKey` is still present in the pool, `acquire()`

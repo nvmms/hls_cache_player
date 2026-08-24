@@ -4,10 +4,10 @@ class NativeVideoBridge {
   NativeVideoBridge._();
 
   static const MethodChannel methods = MethodChannel(
-    'vertical_sliding_video/methods',
+    'hls_cache_player/methods',
   );
   static const EventChannel events = EventChannel(
-    'vertical_sliding_video/events',
+    'hls_cache_player/events',
   );
 
   static final Stream<Map<Object?, Object?>> eventStream = events

@@ -4,19 +4,19 @@
 import PackageDescription
 
 let package = Package(
-    name: "vertical_sliding_video",
+    name: "hls_cache_player",
     platforms: [
         .iOS("13.0")
     ],
     products: [
-        .library(name: "vertical-sliding-video", targets: ["vertical_sliding_video"])
+        .library(name: "hls-cache-player", targets: ["hls_cache_player"])
     ],
     dependencies: [
         .package(name: "FlutterFramework", path: "../FlutterFramework")
     ],
     targets: [
         .target(
-            name: "vertical_sliding_video",
+            name: "hls_cache_player",
             dependencies: [
                 .product(name: "FlutterFramework", package: "FlutterFramework")
             ],

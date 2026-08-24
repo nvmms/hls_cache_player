@@ -1,4 +1,4 @@
-# vertical_sliding_video example
+# hls_cache_player example
 
 示例使用阿里云 VOD Type A URL 鉴权。运行时注入 PrivateKey，不要将 Key
 写入源码或提交到版本库：

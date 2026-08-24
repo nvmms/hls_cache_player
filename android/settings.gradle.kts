@@ -1,1 +1,1 @@
-rootProject.name = "vertical_sliding_video"
+rootProject.name = "hls_cache_player"

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:vertical_sliding_video/vertical_sliding_video.dart';
+import 'package:hls_cache_player/hls_cache_player.dart';
 
 import 'aliyun_type_a_signer.dart';
 import 'pooled_video_feed.dart';

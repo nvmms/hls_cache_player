@@ -1,6 +1,6 @@
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vertical_sliding_video_example/aliyun_type_a_signer.dart';
+import 'package:hls_cache_player_example/aliyun_type_a_signer.dart';
 
 void main() {
   test('matches the Alibaba Cloud Type A signing formula', () {
@@ -11,8 +11,7 @@ void main() {
     );
     final expectedHash = md5
         .convert(
-          '/video/standard/test.mp4-1627747200-0-0-aliyunvodexp1234'
-              .codeUnits,
+          '/video/standard/test.mp4-1627747200-0-0-aliyunvodexp1234'.codeUnits,
         )
         .toString();
 

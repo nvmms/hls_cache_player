@@ -1,19 +1,19 @@
 #
 # To learn more about a Podspec see http://guides.cocoapods.org/syntax/podspec.html.
-# Run `pod lib lint vertical_sliding_video.podspec` to validate before publishing.
+# Run `pod lib lint hls_cache_player.podspec` to validate before publishing.
 #
 Pod::Spec.new do |s|
-  s.name             = 'vertical_sliding_video'
+  s.name             = 'hls_cache_player'
   s.version          = '0.0.1'
-  s.summary          = 'A pooled, cached HLS player for vertical Flutter feeds.'
+  s.summary          = 'A pooled HLS player backed by a local cache proxy.'
   s.description      = <<-DESC
-A pooled Android and iOS HLS player for low-latency vertical video feeds.
+An Android and iOS HLS cache proxy and reusable native player pool.
                        DESC
-  s.homepage         = 'http://example.com'
+  s.homepage         = 'https://github.com/nvmms/hls_cache_player'
   s.license          = { :file => '../LICENSE' }
   s.author           = { 'Your Company' => 'email@example.com' }
   s.source           = { :path => '.' }
-  s.source_files = 'vertical_sliding_video/Sources/vertical_sliding_video/**/*'
+  s.source_files = 'hls_cache_player/Sources/hls_cache_player/**/*'
   s.dependency 'Flutter'
   s.platform = :ios, '13.0'
 
@@ -25,5 +25,5 @@ A pooled Android and iOS HLS player for low-latency vertical video feeds.
   # required reason APIs, update the PrivacyInfo.xcprivacy file to describe your
   # plugin's privacy impact, and then uncomment this line. For more information,
   # see https://developer.apple.com/documentation/bundleresources/privacy_manifest_files
-  # s.resource_bundles = {'vertical_sliding_video_privacy' => ['vertical_sliding_video/Sources/vertical_sliding_video/PrivacyInfo.xcprivacy']}
+  # s.resource_bundles = {'hls_cache_player_privacy' => ['hls_cache_player/Sources/hls_cache_player/PrivacyInfo.xcprivacy']}
 end

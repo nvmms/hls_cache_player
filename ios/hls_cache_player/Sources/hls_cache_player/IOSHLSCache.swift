@@ -6,9 +6,9 @@ final class IOSHLSCache {
   typealias DataResult = Result<Data, Error>
 
   private let memory = NSCache<NSString, NSData>()
-  private let stateQueue = DispatchQueue(label: "vertical_sliding_video.cache.state")
+  private let stateQueue = DispatchQueue(label: "hls_cache_player.cache.state")
   private let ioQueue = DispatchQueue(
-    label: "vertical_sliding_video.cache.io",
+    label: "hls_cache_player.cache.io",
     qos: .utility,
     attributes: .concurrent
   )
@@ -21,7 +21,7 @@ final class IOSHLSCache {
       in: .userDomainMask
     )[0]
     let value = root.appendingPathComponent(
-      "vertical_sliding_video",
+      "hls_cache_player",
       isDirectory: true
     )
     try? FileManager.default.createDirectory(
@@ -317,7 +317,7 @@ final class IOSHLSCache {
 
 final class IOSHLSResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
   let loaderQueue = DispatchQueue(
-    label: "vertical_sliding_video.resource_loader",
+    label: "hls_cache_player.resource_loader",
     qos: .userInitiated
   )
   let assetURL: URL

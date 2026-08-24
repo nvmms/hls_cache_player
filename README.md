@@ -1,4 +1,4 @@
-# vertical_sliding_video
+# hls_cache_player
 
 [中文](README.md) | [English](README.en.md)
 
@@ -21,8 +21,8 @@
 
 ```yaml
 dependencies:
-  vertical_sliding_video:
-    git: https://github.com/nvmms/vertical_sliding_video.git
+  hls_cache_player:
+    git: https://github.com/nvmms/hls_cache_player.git
 ```
 
 然后获取依赖：
@@ -34,16 +34,16 @@ flutter pub get
 在 Dart 文件中导入：
 
 ```dart
-import 'package:vertical_sliding_video/vertical_sliding_video.dart';
+import 'package:hls_cache_player/hls_cache_player.dart';
 ```
 
 需要锁定特定版本时，建议将 `ref` 改为 Git tag 或 commit SHA：
 
 ```yaml
 dependencies:
-  vertical_sliding_video:
+  hls_cache_player:
     git:
-      url: https://github.com/nvmms/vertical_sliding_video.git
+      url: https://github.com/nvmms/hls_cache_player.git
       ref: your-tag-or-commit-sha
 ```
 
@@ -51,8 +51,8 @@ dependencies:
 
 ```yaml
 dependencies:
-  vertical_sliding_video:
-    path: ../vertical_sliding_video
+  hls_cache_player:
+    path: ../hls_cache_player
 ```
 
 ## 快速开始
@@ -60,7 +60,7 @@ dependencies:
 初始化播放器池：
 
 ```dart
-await VerticalVideoPool.configure(
+await HlsCachePlayerPool.configure(
   maxPlayers: 3,
   memoryCacheBytes: 48 * 1024 * 1024,
   diskCacheBytes: 768 * 1024 * 1024,
@@ -76,7 +76,7 @@ const source = HlsVideoSource(
   headers: {'Authorization': 'Bearer token'},
 );
 
-final localUrl = await VerticalVideoPool.preload(source);
+final localUrl = await HlsCachePlayerPool.preload(source);
 ```
 
 `localUrl` 是当前 App 进程内可访问的标准 HTTP HLS 地址，可以交给本包或其他
@@ -84,7 +84,7 @@ HLS 播放器。内置播放器只接收该本地地址：
 
 ```dart
 class VideoItemState extends State<VideoItem> {
-  VerticalVideoController? controller;
+  HlsPlayerController? controller;
 
   @override
   void initState() {
@@ -93,7 +93,7 @@ class VideoItemState extends State<VideoItem> {
   }
 
   Future<void> initializePlayer() async {
-    final value = await VerticalVideoPool.acquire(
+    final value = await HlsCachePlayerPool.acquire(
       widget.localUrl,
       autoPlay: widget.autoPlay,
     );
@@ -116,7 +116,7 @@ class VideoItemState extends State<VideoItem> {
     if (value == null) {
       return const ColoredBox(color: Colors.black);
     }
-    return VerticalVideoPlayer(controller: value);
+    return HlsPlayerView(controller: value);
   }
 }
 ```
@@ -124,7 +124,7 @@ class VideoItemState extends State<VideoItem> {
 业务组件不需要从其他页面传递 controller：
 
 ```dart
-final controller = await VerticalVideoPool.acquire(localUrl);
+final controller = await HlsCachePlayerPool.acquire(localUrl);
 ```
 
 如果同一 `cacheKey` 对应的播放器仍在池中，将返回同一个原生播放实例并增加

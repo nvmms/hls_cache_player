@@ -7,8 +7,8 @@ import 'video_models.dart';
 
 /// A lease on one native player. The same controller can be rendered by
 /// different routes; do not dispose it during the route hand-off.
-class VerticalVideoController extends ValueNotifier<VideoPlayerValue> {
-  VerticalVideoController.internal(
+class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
+  HlsPlayerController.internal(
     this.playerId,
     this.playbackUrl,
     this.textureId,
@@ -67,7 +67,7 @@ class VerticalVideoController extends ValueNotifier<VideoPlayerValue> {
       final message = '${event['message'] ?? 'Native video playback failed.'}'
           '$details';
       debugPrint(
-        'VerticalVideoController(playerId: $playerId, '
+        'HlsPlayerController(playerId: $playerId, '
         'url: $playbackUrl) $message',
       );
       _setValue(value.copyWith(error: message));

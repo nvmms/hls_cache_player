@@ -82,12 +82,12 @@ final class HlsCacheProxy {
     if (root == null || root.isEmpty) {
       throw StateError('Native platform did not return a cache directory.');
     }
-    _directory = Directory('$root/vertical_sliding_video_proxy');
+    _directory = Directory('$root/hls_cache_player_proxy');
     await _directory!.create(recursive: true);
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     _server = server;
     server.listen(_serve, onError: (Object error, StackTrace stack) {
-      stderr.writeln('vertical_sliding_video proxy: $error');
+      stderr.writeln('hls_cache_player proxy: $error');
     });
   }
 
@@ -153,7 +153,7 @@ final class HlsCacheProxy {
           '${request.uri}: $error';
       developer.log(
         message,
-        name: 'vertical_sliding_video',
+        name: 'hls_cache_player',
         error: error,
         stackTrace: stack,
         level: 1000,
