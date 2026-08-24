@@ -386,9 +386,19 @@ final class IOSHLSResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
     sourceURL: URL
   ) {
     if let information = request.contentInformationRequest {
-      information.contentType = isPlaylist(data, url: sourceURL)
-        ? "public.m3u-playlist"
-        : "public.data"
+      let detectedType = contentType(for: sourceURL, data: data)
+      // AVFoundation may constrain the accepted types for an individual
+      // request. Supplying an unsupported generic type (for example
+      // public.data for an MPEG-2 transport stream) makes HLS parsing fail.
+      if
+        let allowedTypes = information.allowedContentTypes,
+        !allowedTypes.isEmpty,
+        !allowedTypes.contains(detectedType)
+      {
+        information.contentType = nil
+      } else {
+        information.contentType = detectedType
+      }
       information.contentLength = Int64(data.count)
       information.isByteRangeAccessSupported = true
     }
@@ -405,6 +415,25 @@ final class IOSHLSResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
       }
     }
     request.finishLoading()
+  }
+
+  private func contentType(for url: URL, data: Data) -> String {
+    if isPlaylist(data, url: url) { return "public.m3u-playlist" }
+
+    switch url.pathExtension.lowercased() {
+    case "ts", "m2ts":
+      return "public.mpeg-2-transport-stream"
+    case "mp4", "m4s", "m4v":
+      return "public.mpeg-4"
+    case "aac":
+      return "public.aac-audio"
+    case "mp3":
+      return "public.mp3"
+    case "vtt", "webvtt":
+      return "public.webvtt"
+    default:
+      return "public.data"
+    }
   }
 
   private func rewritePlaylist(_ data: Data, baseURL: URL) -> Data {
