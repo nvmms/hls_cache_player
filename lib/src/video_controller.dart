@@ -58,7 +58,16 @@ class VerticalVideoController extends ValueNotifier<VideoPlayerValue> {
   void _onEvent(Map<Object?, Object?> event) {
     if (_disposed) return;
     if (event['type'] == 'error') {
-      _setValue(value.copyWith(error: event['message']?.toString()));
+      final domain = event['domain']?.toString();
+      final code = event['code'];
+      final details = domain == null ? '' : ' [$domain:$code]';
+      final message = '${event['message'] ?? 'Native video playback failed.'}'
+          '$details';
+      debugPrint(
+        'VerticalVideoController(playerId: $playerId, '
+        'url: ${source.url}) $message',
+      );
+      _setValue(value.copyWith(error: message));
       return;
     }
     if (event['type'] != 'state') return;

@@ -1,5 +1,6 @@
 import AVFoundation
 import Flutter
+import os.log
 import UIKit
 
 struct IOSVideoSource {
@@ -58,6 +59,11 @@ final class IOSVideoEngine {
   private var maxPlayers = 3
   private var nextPlayerId = 1
 
+  private let log = OSLog(
+    subsystem: "vertical_sliding_video",
+    category: "player"
+  )
+
   init(emit: @escaping EventEmitter) {
     self.emit = emit
   }
@@ -98,13 +104,26 @@ final class IOSVideoEngine {
     slot.leases = 1
     slot.lastUsed = Date()
 
-    let loader = IOSHLSResourceLoader(source: source, cache: cache)
-    slot.resourceLoader = loader
-    let asset = AVURLAsset(url: loader.assetURL)
-    asset.resourceLoader.setDelegate(loader, queue: loader.loaderQueue)
+    // AVFoundation's HLS parser rejects the custom-scheme resource-loader
+    // pipeline for otherwise valid signed MPEG-TS playlists on iOS. Load the
+    // signed HTTPS playlist directly; preload still warms this package's cache,
+    // while playback remains compatible with AVPlayer's native HLS stack.
+    let assetOptions: [String: Any] = source.headers.isEmpty
+      ? [:]
+      : ["AVURLAssetHTTPHeaderFieldsKey": source.headers]
+    let asset = AVURLAsset(url: source.url, options: assetOptions)
     let item = AVPlayerItem(asset: asset)
     slot.player.replaceCurrentItem(with: item)
     installObservers(slot, item: item)
+
+    os_log(
+      "Acquired player %{public}d for %{public}@ (autoPlay=%{public}@)",
+      log: log,
+      type: .info,
+      slot.id,
+      source.url.absoluteString,
+      autoPlay.description
+    )
 
     if autoPlay { slot.player.play() }
     return slot.id
@@ -306,6 +325,9 @@ final class IOSVideoEngine {
     ended: Bool = false
   ) -> [String: Any] {
     let item = slot.player.currentItem
+    if item?.status == .failed || slot.player.status == .failed {
+      return errorEvent(slot, item?.error ?? slot.player.error)
+    }
     let playbackState: Int
     if ended {
       playbackState = 4
@@ -333,11 +355,33 @@ final class IOSVideoEngine {
   }
 
   private func emitError(_ slot: IOSPlayerSlot, _ error: Error?) {
-    emit([
+    let event = errorEvent(slot, error)
+    os_log(
+      "Player %{public}d failed: %{public}@",
+      log: log,
+      type: .error,
+      slot.id,
+      event["message"] as? String ?? "AVPlayer failed."
+    )
+    emit(event)
+  }
+
+  private func errorEvent(
+    _ slot: IOSPlayerSlot,
+    _ error: Error?
+  ) -> [String: Any] {
+    let nsError = error as NSError?
+    var message = error?.localizedDescription ?? "AVPlayer failed."
+    if let reason = nsError?.localizedFailureReason, !reason.isEmpty {
+      message += " \(reason)"
+    }
+    return [
       "playerId": slot.id,
       "type": "error",
-      "message": error?.localizedDescription ?? "AVPlayer failed.",
-    ])
+      "message": message,
+      "domain": nsError?.domain ?? "AVFoundationErrorDomain",
+      "code": nsError?.code ?? 0,
+    ]
   }
 
   private func milliseconds(_ time: CMTime) -> Int64 {
@@ -378,7 +422,20 @@ private final class IOSVideoPlatformView: NSObject, FlutterPlatformView {
     container.backgroundColor = .black
     container.playerLayer.videoGravity =
       fit == "contain" ? .resizeAspect : .resizeAspectFill
-    try? engine.attachView(playerId, view: container)
+    do {
+      try engine.attachView(playerId, view: container)
+    } catch {
+      os_log(
+        "Unable to attach platform view to player %{public}d: %{public}@",
+        log: OSLog(
+          subsystem: "vertical_sliding_video",
+          category: "player"
+        ),
+        type: .error,
+        playerId,
+        error.localizedDescription
+      )
+    }
   }
 
   func view() -> UIView { container }
