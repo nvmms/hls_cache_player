@@ -36,6 +36,7 @@ private final class IOSPlayerSlot {
   var leases = 0
   var lastUsed = Date()
   var looping = false
+  var wantsToPlay = false
   var resourceLoader: IOSHLSResourceLoader?
   var timeControlObservation: NSKeyValueObservation?
   var itemStatusObservation: NSKeyValueObservation?
@@ -54,6 +55,7 @@ final class IOSVideoEngine {
 
   private let emit: EventEmitter
   private let cache = IOSHLSCache()
+  private lazy var localProxy = IOSLocalHLSProxy(cache: cache)
   private var slots: [Int: IOSPlayerSlot] = [:]
   private var attachedViews: [Int: [WeakVideoView]] = [:]
   private var maxPlayers = 3
@@ -82,9 +84,9 @@ final class IOSVideoEngine {
 
   func preload(
     _ source: IOSVideoSource,
-    completion: @escaping (Error?) -> Void
+    completion: @escaping (Result<String, Error>) -> Void
   ) {
-    cache.preload(source, completion: completion)
+    localProxy.preload(source, completion: completion)
   }
 
   func acquire(_ source: IOSVideoSource, autoPlay: Bool) throws -> Int {
@@ -95,7 +97,10 @@ final class IOSVideoEngine {
     }) {
       existing.leases += 1
       existing.lastUsed = Date()
-      if autoPlay { existing.player.play() }
+      if autoPlay {
+        existing.wantsToPlay = true
+        existing.player.play()
+      }
       return existing.id
     }
 
@@ -103,11 +108,11 @@ final class IOSVideoEngine {
     slot.cacheKey = source.cacheKey
     slot.leases = 1
     slot.lastUsed = Date()
+    slot.wantsToPlay = autoPlay
 
-    // AVFoundation's HLS parser rejects the custom-scheme resource-loader
-    // pipeline for otherwise valid signed MPEG-TS playlists on iOS. Load the
-    // signed HTTPS playlist directly; preload still warms this package's cache,
-    // while playback remains compatible with AVPlayer's native HLS stack.
+    // Playback uses the loopback URL returned by preload. AVPlayer requests
+    // playlist resources on demand and the native proxy serves cached bytes or
+    // fetches missing segments from the signed upstream URL.
     let assetOptions: [String: Any] = source.headers.isEmpty
       ? [:]
       : ["AVURLAssetHTTPHeaderFieldsKey": source.headers]
@@ -115,15 +120,6 @@ final class IOSVideoEngine {
     let item = AVPlayerItem(asset: asset)
     slot.player.replaceCurrentItem(with: item)
     installObservers(slot, item: item)
-
-    os_log(
-      "Acquired player %{public}d for %{public}@ (autoPlay=%{public}@)",
-      log: log,
-      type: .info,
-      slot.id,
-      source.url.absoluteString,
-      autoPlay.description
-    )
 
     if autoPlay { slot.player.play() }
     return slot.id
@@ -135,11 +131,14 @@ final class IOSVideoEngine {
       emitError(slot, slot.player.currentItem?.error)
       return
     }
+    slot.wantsToPlay = true
     slot.player.play()
   }
 
   func pause(_ id: Int) throws {
-    try playerSlot(id).player.pause()
+    let slot = try playerSlot(id)
+    slot.wantsToPlay = false
+    slot.player.pause()
   }
 
   func seek(_ id: Int, positionMilliseconds: Int64) throws {
@@ -165,6 +164,7 @@ final class IOSVideoEngine {
     slot.leases = max(0, slot.leases - 1)
     slot.lastUsed = Date()
     guard slot.leases == 0 else { return }
+    slot.wantsToPlay = false
     slot.player.pause()
     if slots.count > maxPlayers { discardSlot(slot) }
   }
@@ -217,6 +217,7 @@ final class IOSVideoEngine {
     }
     slots.removeAll()
     attachedViews.removeAll()
+    localProxy.stop()
   }
 
   private func obtainSlot() throws -> IOSPlayerSlot {
@@ -274,6 +275,9 @@ final class IOSVideoEngine {
       if item.status == .failed {
         self.emitError(slot, item.error)
       } else {
+        if item.status == .readyToPlay, slot.wantsToPlay {
+          slot.player.play()
+        }
         self.emitState(slot)
       }
     }
@@ -351,6 +355,10 @@ final class IOSVideoEngine {
       ),
       "videoWidth": Int(dimensions.width),
       "videoHeight": Int(dimensions.height),
+      "itemStatus": item?.status.rawValue ?? -1,
+      "playerStatus": slot.player.status.rawValue,
+      "timeControlStatus": slot.player.timeControlStatus.rawValue,
+      "waitingReason": slot.player.reasonForWaitingToPlay?.rawValue ?? "",
     ]
   }
 
@@ -374,6 +382,12 @@ final class IOSVideoEngine {
     var message = error?.localizedDescription ?? "AVPlayer failed."
     if let reason = nsError?.localizedFailureReason, !reason.isEmpty {
       message += " \(reason)"
+    }
+    if let underlying = nsError?.userInfo[NSUnderlyingErrorKey] as? NSError {
+      message += " underlying=\(underlying.domain):\(underlying.code)"
+      if let description = underlying.userInfo[NSLocalizedDescriptionKey] {
+        message += " \(description)"
+      }
     }
     return [
       "playerId": slot.id,

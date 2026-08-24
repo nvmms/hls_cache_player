@@ -76,10 +76,11 @@ const source = HlsVideoSource(
   headers: {'Authorization': 'Bearer token'},
 );
 
-await VerticalVideoPool.preload(source);
+final localUrl = await VerticalVideoPool.preload(source);
 ```
 
-任意组件都可以通过相同的 `cacheKey` 获取播放实例：
+`localUrl` 是当前 App 进程内可访问的标准 HTTP HLS 地址，可以交给本包或其他
+HLS 播放器。内置播放器只接收该本地地址：
 
 ```dart
 class VideoItemState extends State<VideoItem> {
@@ -93,7 +94,7 @@ class VideoItemState extends State<VideoItem> {
 
   Future<void> initializePlayer() async {
     final value = await VerticalVideoPool.acquire(
-      widget.source,
+      widget.localUrl,
       autoPlay: widget.autoPlay,
     );
     if (!mounted) {
@@ -120,11 +121,10 @@ class VideoItemState extends State<VideoItem> {
 }
 ```
 
-业务组件不需要从其他页面传递 controller。播放器池会根据 `cacheKey`
-查找现有原生播放器：
+业务组件不需要从其他页面传递 controller：
 
 ```dart
-final controller = await VerticalVideoPool.acquire(source);
+final controller = await VerticalVideoPool.acquire(localUrl);
 ```
 
 如果同一 `cacheKey` 对应的播放器仍在池中，将返回同一个原生播放实例并增加
@@ -140,8 +140,8 @@ await controller.release();
 播放器池是有上限的。播放器没有租约后会留在空闲池中等待复用：
 
 ```text
-acquire(cacheKey)
-  → 命中相同 cacheKey：返回现有播放实例
+acquire(localUrl)
+  → 命中相同 localUrl：返回现有播放实例
   → 未命中：获取空闲实例或创建新实例
 
 release()
@@ -161,11 +161,11 @@ release()
 
 ## cacheKey
 
-`cacheKey` 由业务方传入，同时用于：
+`cacheKey` 由业务方传入，用于：
 
-- 查找相同视频的播放实例
 - 隔离该视频的 HLS 资源缓存
 - 合并相同资源的并发请求
+- 在签名 URL 更新后继续命中相同 playlist 和分片
 
 视频内容、转码版本或鉴权身份发生变化时，应更换 key，例如：
 
@@ -185,7 +185,9 @@ post-42-video-v3
 - fMP4 init map
 - 第一个媒体分片
 
-实际播放期间的后续分片会经过同一缓存入口，读取顺序为内存、磁盘、网络。
+代理会将 playlist 中的所有资源改写为 loopback URL。实际播放期间只有播放器
+请求到后续分片时才会下载，读取顺序为内存、磁盘、网络。资源键由稳定
+`cacheKey` 和不含签名参数的资源路径组成。
 
 预加载多码率 master playlist 时，目前选择第一条 variant 预热。实际播放仍
 由 Android Media3 或 iOS AVPlayer 进行码率选择，运行时选择的 variant 也会
@@ -195,12 +197,60 @@ post-42-video-v3
 
 ### Android
 
-使用 Media3 ExoPlayer、`SimpleCache` 和自定义内存优先 `DataSource`。
+使用 Media3 ExoPlayer 播放 Dart 缓存代理提供的本地 HLS 地址。
+代理只绑定 `127.0.0.1`，但 Android 9（API 28）及以上默认可能禁止 HTTP，
+因此宿主 App 必须允许本地代理使用明文 HTTP。
+
+1. 新建 `android/app/src/main/res/xml/network_security_config.xml`：
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+  <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
+```
+
+2. 修改 `android/app/src/main/AndroidManifest.xml` 的 `<application>`：
+
+```xml
+<application
+    android:name="${applicationName}"
+    android:usesCleartextTraffic="true"
+    android:networkSecurityConfig="@xml/network_security_config"
+    ...>
+```
+
+同时确认 manifest 中存在网络权限：
+
+```xml
+<uses-permission android:name="android.permission.INTERNET" />
+```
+
+如果宿主没有自定义 `networkSecurityConfig`，插件 manifest 中的
+`usesCleartextTraffic="true"` 通常已经足够；仍建议显式采用以上配置，避免
+宿主或其他依赖合并 manifest 后覆盖策略。该配置允许 App 内的 HTTP 请求，
+本包代理本身只监听 loopback，不会暴露到局域网。example 已包含完整配置。
 
 ### iOS
 
-最低支持 iOS 13.0，使用 AVPlayer 和 AVAssetResourceLoader。playlist 中的
-variant、Key、init map、字幕和媒体分片会被改写到内部缓存协议。
+最低支持 iOS 13.0，使用 AVPlayer 播放原生缓存代理提供的本地 HLS 地址。
+代理只监听 `127.0.0.1`。在宿主的 `ios/Runner/Info.plist` 中，把下面内容加入
+顶层 `<dict>`；如果已经存在 `NSAppTransportSecurity`，请合并子项，不要创建
+第二个同名 key：
+
+```xml
+<key>NSAppTransportSecurity</key>
+<dict>
+  <key>NSAllowsArbitraryLoadsForMedia</key>
+  <true/>
+  <key>NSAllowsLocalNetworking</key>
+  <true/>
+</dict>
+```
+
+修改后需要停止正在运行的 App 并重新执行 `flutter run`，hot reload 不会重新
+加载原生网络安全配置。`NSAllowsLocalNetworking` 允许 loopback 连接，
+`NSAllowsArbitraryLoadsForMedia` 允许 AVPlayer 加载代理返回的 HTTP HLS 资源。
 
 ## Example
 

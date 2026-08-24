@@ -44,7 +44,8 @@ final class IOSHLSCache {
     data(
       cacheKey: source.cacheKey,
       url: source.url,
-      headers: source.headers
+      headers: source.headers,
+      refresh: true
     ) { result in
       switch result {
       case .failure(let error):
@@ -64,17 +65,18 @@ final class IOSHLSCache {
     cacheKey: String,
     url: URL,
     headers: [String: String],
+    refresh: Bool = false,
     completion: @escaping (DataResult) -> Void
   ) {
     let key = namespacedKey(cacheKey: cacheKey, url: url)
-    if let cached = memory.object(forKey: key as NSString) {
+    if !refresh, let cached = memory.object(forKey: key as NSString) {
       completion(.success(cached as Data))
       return
     }
 
     let fileURL = diskURL(for: key)
     ioQueue.async {
-      if let diskData = try? Data(contentsOf: fileURL) {
+      if !refresh, let diskData = try? Data(contentsOf: fileURL) {
         self.memory.setObject(
           diskData as NSData,
           forKey: key as NSString,
@@ -155,7 +157,8 @@ final class IOSHLSCache {
       data(
         cacheKey: source.cacheKey,
         url: variant,
-        headers: source.headers
+        headers: source.headers,
+        refresh: true
       ) { result in
         switch result {
         case .failure(let error):
@@ -265,7 +268,10 @@ final class IOSHLSCache {
   }
 
   private func namespacedKey(cacheKey: String, url: URL) -> String {
-    "\(cacheKey):\(url.absoluteString.sha256)"
+    var canonical = URLComponents(url: url, resolvingAgainstBaseURL: false)
+    canonical?.query = nil
+    canonical?.fragment = nil
+    return "\(cacheKey):\((canonical?.url ?? url).absoluteString.sha256)"
   }
 
   private func diskURL(for key: String) -> URL {
@@ -504,7 +510,7 @@ final class IOSHLSResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
   }
 }
 
-private extension String {
+extension String {
   var sha256: String {
     SHA256.hash(data: Data(utf8)).map { String(format: "%02x", $0) }.joined()
   }

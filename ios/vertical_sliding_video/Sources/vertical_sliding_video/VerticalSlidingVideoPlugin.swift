@@ -31,6 +31,16 @@ public final class VerticalSlidingVideoPlugin: NSObject, FlutterPlugin,
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    if call.method == "cacheDirectory" {
+      result(
+        FileManager.default.urls(
+          for: .cachesDirectory,
+          in: .userDomainMask
+        )[0].path
+      )
+      return
+    }
+
     guard let arguments = call.arguments as? [String: Any] else {
       result(error("arguments", "Method arguments are required."))
       return
@@ -54,18 +64,29 @@ public final class VerticalSlidingVideoPlugin: NSObject, FlutterPlugin,
 
       case "preload":
         let source = try videoSource(arguments)
-        engine.preload(source) { preloadError in
+        engine.preload(source) { preloadResult in
           DispatchQueue.main.async {
-            if let preloadError {
+            switch preloadResult {
+            case .success(let localURL):
+              result(localURL)
+            case .failure(let preloadError):
               result(self.error("preload", preloadError.localizedDescription))
-            } else {
-              result(nil)
             }
           }
         }
 
       case "acquire":
-        let source = try videoSource(arguments)
+        guard
+          let urlString = arguments["url"] as? String,
+          let url = URL(string: urlString)
+        else {
+          throw IOSVideoError.invalidSource
+        }
+        let source = IOSVideoSource(
+          cacheKey: urlString,
+          url: url,
+          headers: [:]
+        )
         let playerId = try engine.acquire(
           source,
           autoPlay: arguments["autoPlay"] as? Bool ?? false

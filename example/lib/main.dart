@@ -7,6 +7,7 @@ import 'pooled_video_feed.dart';
 const _vodAuthKey = String.fromEnvironment('VOD_AUTH_KEY');
 
 const videoUrls = <String>[
+  'https://vod.gbtjkj.top/0062f712146971f1bfd6752281fd0102/4aebcd319fdd46f03a2c655c6042f90e-sd-m3u8-shortvideo-bitrate.m3u8',
   'https://vod.gbtjkj.top/0062f712146971f1bfd6752281fd0102/58e1f3d664ef4452a6d7b4f600b8a3b1-878cc6f5f38efcd1c37f6c084f7801b8-sd.m3u8',
   'https://vod.gbtjkj.top/10a63ba507b971f19bab1777b3df0102/00717e632a7d44f59f5b326d9b8e3538-2bf1abcc996ae9d789c877852f89a1fc-sd.m3u8',
   'https://vod.gbtjkj.top/d0a7656907b971f19383752281fd0102/709e7bb79f6b4a0fbc686b7414dedc0b-446080a51b4d225b5c512d4897dfc9f6-sd.m3u8',

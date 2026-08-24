@@ -1,4 +1,7 @@
+import 'package:flutter/foundation.dart';
+
 import 'native_bridge.dart';
+import 'hls_cache_proxy.dart';
 import 'video_controller.dart';
 import 'video_models.dart';
 
@@ -23,35 +26,59 @@ class VerticalVideoPool {
       'memoryCacheBytes': memoryCacheBytes,
       'diskCacheBytes': diskCacheBytes,
     });
+    await HlsCacheProxy.instance.configure(
+      memoryCacheBytes: memoryCacheBytes,
+      diskCacheBytes: diskCacheBytes,
+    );
     _configured = true;
   }
 
   /// Preloads the HLS playlist, key/init resource, and first media segment.
-  static Future<void> preload(HlsVideoSource source) async {
+  /// Returns a process-local HTTP URL that can be passed to any HLS player.
+  static Future<String> preload(HlsVideoSource source) async {
     await _ensureConfigured();
-    await NativeVideoBridge.methods.invokeMethod<void>(
-      'preload',
-      source.toMessage(),
-    );
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      final localUrl = await NativeVideoBridge.methods.invokeMethod<String>(
+        'preload',
+        source.toMessage(),
+      );
+      if (localUrl == null) {
+        throw StateError('Native iOS proxy did not return a local URL.');
+      }
+      return localUrl;
+    }
+    return HlsCacheProxy.instance.preload(source);
   }
 
-  static Future<void> preloadAll(Iterable<HlsVideoSource> sources) async {
+  static Future<List<String>> preloadAll(
+      Iterable<HlsVideoSource> sources) async {
     await _ensureConfigured();
-    await Future.wait(sources.map(preload));
+    return Future.wait(sources.map(preload));
   }
 
-  /// Leases a native player. Pass the returned controller between routes to
-  /// continue playback without preparing a second player.
+  /// Leases a native player for a URL returned by [preload].
   static Future<VerticalVideoController> acquire(
-    HlsVideoSource source, {
+    String localProxyUrl, {
     bool autoPlay = false,
     bool looping = true,
   }) async {
     await _ensureConfigured();
+    final uri = Uri.tryParse(localProxyUrl);
+    if (uri == null ||
+        uri.scheme != 'http' ||
+        (uri.host != '127.0.0.1' &&
+            uri.host != '::1' &&
+            uri.host != 'localhost')) {
+      throw ArgumentError.value(
+        localProxyUrl,
+        'localProxyUrl',
+        'Must be a loopback URL returned by preload().',
+      );
+    }
     final acquired = await NativeVideoBridge.methods.invokeMethod<Object?>(
       'acquire',
       {
-        ...source.toMessage(),
+        'url': localProxyUrl,
         'autoPlay': autoPlay,
       },
     );
@@ -65,7 +92,11 @@ class VerticalVideoPool {
       textureId = null;
     }
     if (id == null) throw StateError('Native player did not return an id.');
-    final controller = VerticalVideoController.internal(id, source, textureId);
+    final controller = VerticalVideoController.internal(
+      id,
+      localProxyUrl,
+      textureId,
+    );
     await controller.refresh();
     if (looping) await controller.setLooping(true);
     return controller;
@@ -77,6 +108,7 @@ class VerticalVideoPool {
 
   static Future<void> dispose() async {
     await NativeVideoBridge.methods.invokeMethod<void>('dispose');
+    await HlsCacheProxy.instance.dispose();
     _configured = false;
   }
 }

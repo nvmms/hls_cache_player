@@ -18,6 +18,7 @@ class _PooledPostListPageState extends State<PooledPostListPage> {
   Object? _error;
   bool _ready = false;
   bool _feedOpen = false;
+  List<String> _proxyUrls = const [];
 
   @override
   void initState() {
@@ -30,9 +31,11 @@ class _PooledPostListPageState extends State<PooledPostListPage> {
       // A list can transiently have more than three mounted children because
       // ListView keeps a small cache extent. Feed pages normally use at most 3.
       await VerticalVideoPool.configure(maxPlayers: 4);
-      await VerticalVideoPool.preloadAll(widget.videos);
+      _proxyUrls = await VerticalVideoPool.preloadAll(widget.videos);
       if (mounted) setState(() => _ready = true);
-    } catch (error) {
+    } catch (error, stackTrace) {
+      debugPrint('视频初始化失败：$error');
+      debugPrintStack(stackTrace: stackTrace);
       if (mounted) setState(() => _error = error);
     }
   }
@@ -55,8 +58,11 @@ class _PooledPostListPageState extends State<PooledPostListPage> {
 
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) =>
-            VerticalFeedPage(videos: widget.videos, initialPage: index),
+        builder: (_) => VerticalFeedPage(
+          videos: widget.videos,
+          proxyUrls: _proxyUrls,
+          initialPage: index,
+        ),
       ),
     );
 
@@ -78,6 +84,7 @@ class _PooledPostListPageState extends State<PooledPostListPage> {
         itemBuilder: (context, index) => PostVideoItem(
           key: _keyFor(index),
           source: widget.videos[index],
+          proxyUrl: _proxyUrls[index],
           index: index,
           enabled: !_feedOpen,
           autoPlay: index == 0,
@@ -92,6 +99,7 @@ class _PooledPostListPageState extends State<PooledPostListPage> {
 class PostVideoItem extends StatefulWidget {
   const PostVideoItem({
     required this.source,
+    required this.proxyUrl,
     required this.index,
     required this.enabled,
     required this.autoPlay,
@@ -100,6 +108,7 @@ class PostVideoItem extends StatefulWidget {
   });
 
   final HlsVideoSource source;
+  final String proxyUrl;
   final int index;
   final bool enabled;
   final bool autoPlay;
@@ -140,7 +149,7 @@ class PostVideoItemState extends State<PostVideoItem> {
     final generation = ++_generation;
     try {
       final controller = await VerticalVideoPool.acquire(
-        widget.source,
+        widget.proxyUrl,
         autoPlay: widget.autoPlay,
       );
       if (!mounted || !widget.enabled || generation != _generation) {
@@ -148,7 +157,9 @@ class PostVideoItemState extends State<PostVideoItem> {
         return;
       }
       setState(() => _controller = controller);
-    } catch (error) {
+    } catch (error, stackTrace) {
+      debugPrint('列表视频播放器初始化失败：$error');
+      debugPrintStack(stackTrace: stackTrace);
       if (mounted && generation == _generation) {
         setState(() => _error = error);
       }
@@ -198,7 +209,7 @@ class PostVideoItemState extends State<PostVideoItem> {
             if (_error != null) Center(child: Text('播放器初始化失败：$_error')),
             Positioned(
               left: 16,
-              bottom: 16,
+              bottom: 50,
               child: Text('视频 ${widget.index + 1} · 点击进入竖屏'),
             ),
             if (_controller case final controller?)
@@ -220,11 +231,13 @@ class PostVideoItemState extends State<PostVideoItem> {
 class VerticalFeedPage extends StatefulWidget {
   const VerticalFeedPage({
     required this.videos,
+    required this.proxyUrls,
     required this.initialPage,
     super.key,
   });
 
   final List<HlsVideoSource> videos;
+  final List<String> proxyUrls;
   final int initialPage;
 
   @override
@@ -256,6 +269,7 @@ class _VerticalFeedPageState extends State<VerticalFeedPage> {
         itemBuilder: (context, index) => VerticalFeedVideoItem(
           key: ValueKey(widget.videos[index].cacheKey),
           source: widget.videos[index],
+          proxyUrl: widget.proxyUrls[index],
           index: index,
           shouldPlay: index == _currentIndex,
         ),
@@ -272,12 +286,14 @@ class _VerticalFeedPageState extends State<VerticalFeedPage> {
 class VerticalFeedVideoItem extends StatefulWidget {
   const VerticalFeedVideoItem({
     required this.source,
+    required this.proxyUrl,
     required this.index,
     required this.shouldPlay,
     super.key,
   });
 
   final HlsVideoSource source;
+  final String proxyUrl;
   final int index;
   final bool shouldPlay;
 
@@ -310,7 +326,7 @@ class _VerticalFeedVideoItemState extends State<VerticalFeedVideoItem> {
     final generation = ++_generation;
     try {
       final controller = await VerticalVideoPool.acquire(
-        widget.source,
+        widget.proxyUrl,
         autoPlay: widget.shouldPlay,
       );
       if (!mounted || generation != _generation) {
@@ -320,7 +336,9 @@ class _VerticalFeedVideoItemState extends State<VerticalFeedVideoItem> {
       _controller = controller;
       await _applyPlaybackState();
       if (mounted) setState(() {});
-    } catch (error) {
+    } catch (error, stackTrace) {
+      debugPrint('竖屏视频播放器初始化失败：$error');
+      debugPrintStack(stackTrace: stackTrace);
       if (mounted && generation == _generation) {
         setState(() => _error = error);
       }

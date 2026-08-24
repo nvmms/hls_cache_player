@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Required by the process-local HLS proxy at http://127.0.0.1. -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
