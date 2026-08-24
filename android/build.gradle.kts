@@ -1,4 +1,4 @@
-group = "com.sinhonny.vertical_sliding_video"
+group = "com.sinhonny.hls_cache_player"
 version = "1.0"
 
 buildscript {
@@ -24,7 +24,7 @@ plugins {
 }
 
 android {
-    namespace = "com.sinhonny.vertical_sliding_video"
+    namespace = "com.sinhonny.hls_cache_player"
 
     compileSdk = 36
 

@@ -1,7 +1,7 @@
-name: vertical_sliding_video
-description: "A new Flutter plugin project."
+name: hls_cache_player
+description: "A cross-platform HLS cache proxy, player pool, and Flutter video view."
 version: 0.0.1
-homepage:
+homepage: https://github.com/nvmms/hls_cache_player
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -36,10 +36,10 @@ flutter:
   plugin:
     platforms:
       android:
-        package: com.sinhonny.vertical_sliding_video
-        pluginClass: VerticalSlidingVideoPlugin
+        package: com.sinhonny.hls_cache_player
+        pluginClass: HlsCachePlayerPlugin
       ios:
-        pluginClass: VerticalSlidingVideoPlugin
+        pluginClass: HlsCachePlayerPlugin
 
   # To add assets to your plugin package, add an assets section, like this:
   # assets:

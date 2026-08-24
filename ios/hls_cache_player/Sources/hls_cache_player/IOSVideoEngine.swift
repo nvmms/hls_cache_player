@@ -62,7 +62,7 @@ final class IOSVideoEngine {
   private var nextPlayerId = 1
 
   private let log = OSLog(
-    subsystem: "vertical_sliding_video",
+    subsystem: "hls_cache_player",
     category: "player"
   )
 
@@ -442,7 +442,7 @@ private final class IOSVideoPlatformView: NSObject, FlutterPlatformView {
       os_log(
         "Unable to attach platform view to player %{public}d: %{public}@",
         log: OSLog(
-          subsystem: "vertical_sliding_video",
+          subsystem: "hls_cache_player",
           category: "player"
         ),
         type: .error,

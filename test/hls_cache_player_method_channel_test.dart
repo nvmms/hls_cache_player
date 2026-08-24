@@ -2,11 +2,11 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vertical_sliding_video/vertical_sliding_video.dart';
+import 'package:hls_cache_player/hls_cache_player.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  const channel = MethodChannel('vertical_sliding_video/methods');
+  const channel = MethodChannel('hls_cache_player/methods');
   final calls = <MethodCall>[];
   late Directory cacheDirectory;
   late HttpServer upstream;
@@ -40,7 +40,7 @@ two.ts
   });
 
   tearDown(() async {
-    await VerticalVideoPool.dispose();
+    await HlsCachePlayerPool.dispose();
     await upstream.close(force: true);
     await cacheDirectory.delete(recursive: true);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -48,14 +48,14 @@ two.ts
   });
 
   test('pool forwards only the local proxy URL to acquire', () async {
-    await VerticalVideoPool.configure();
-    final localUrl = await VerticalVideoPool.preload(
+    await HlsCachePlayerPool.configure();
+    final localUrl = await HlsCachePlayerPool.preload(
       HlsVideoSource(
         cacheKey: 'method-channel',
         url: 'http://${upstream.address.address}:${upstream.port}/video.m3u8',
       ),
     );
-    final controller = await VerticalVideoPool.acquire(localUrl);
+    final controller = await HlsCachePlayerPool.acquire(localUrl);
 
     final acquire = calls.firstWhere((call) => call.method == 'acquire');
     expect(acquire.arguments, {
@@ -76,13 +76,13 @@ two.ts
       return null;
     });
 
-    final localUrl = await VerticalVideoPool.preload(
+    final localUrl = await HlsCachePlayerPool.preload(
       HlsVideoSource(
         cacheKey: 'texture-key',
         url: 'http://${upstream.address.address}:${upstream.port}/video.m3u8',
       ),
     );
-    final controller = await VerticalVideoPool.acquire(localUrl);
+    final controller = await HlsCachePlayerPool.acquire(localUrl);
 
     expect(controller.playerId, 7);
     expect(controller.textureId, 11);

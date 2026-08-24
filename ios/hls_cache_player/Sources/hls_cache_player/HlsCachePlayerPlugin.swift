@@ -1,7 +1,7 @@
 import Flutter
 import UIKit
 
-public final class VerticalSlidingVideoPlugin: NSObject, FlutterPlugin,
+public final class HlsCachePlayerPlugin: NSObject, FlutterPlugin,
   FlutterStreamHandler
 {
   private var eventSink: FlutterEventSink?
@@ -10,23 +10,23 @@ public final class VerticalSlidingVideoPlugin: NSObject, FlutterPlugin,
   }
 
   public static func register(with registrar: FlutterPluginRegistrar) {
-    let instance = VerticalSlidingVideoPlugin()
+    let instance = HlsCachePlayerPlugin()
 
     let methods = FlutterMethodChannel(
-      name: "vertical_sliding_video/methods",
+      name: "hls_cache_player/methods",
       binaryMessenger: registrar.messenger()
     )
     registrar.addMethodCallDelegate(instance, channel: methods)
 
     let events = FlutterEventChannel(
-      name: "vertical_sliding_video/events",
+      name: "hls_cache_player/events",
       binaryMessenger: registrar.messenger()
     )
     events.setStreamHandler(instance)
 
     registrar.register(
       IOSVideoViewFactory(engine: instance.engine),
-      withId: "vertical_sliding_video/view"
+      withId: "hls_cache_player/view"
     )
   }
 
@@ -130,7 +130,7 @@ public final class VerticalSlidingVideoPlugin: NSObject, FlutterPlugin,
         result(FlutterMethodNotImplemented)
       }
     } catch {
-      result(self.error("vertical_sliding_video", error.localizedDescription))
+      result(self.error("hls_cache_player", error.localizedDescription))
     }
   }
 

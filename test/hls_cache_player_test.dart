@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vertical_sliding_video/vertical_sliding_video.dart';
+import 'package:hls_cache_player/hls_cache_player.dart';
 
 void main() {
   test('HlsVideoSource exposes a user supplied cache key', () {

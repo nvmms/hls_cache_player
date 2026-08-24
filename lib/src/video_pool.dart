@@ -6,8 +6,8 @@ import 'video_controller.dart';
 import 'video_models.dart';
 
 /// Process-wide entry point for preloading and leasing native players.
-class VerticalVideoPool {
-  VerticalVideoPool._();
+class HlsCachePlayerPool {
+  HlsCachePlayerPool._();
 
   static bool _configured = false;
 
@@ -57,7 +57,7 @@ class VerticalVideoPool {
   }
 
   /// Leases a native player for a URL returned by [preload].
-  static Future<VerticalVideoController> acquire(
+  static Future<HlsPlayerController> acquire(
     String localProxyUrl, {
     bool autoPlay = false,
     bool looping = true,
@@ -92,7 +92,7 @@ class VerticalVideoPool {
       textureId = null;
     }
     if (id == null) throw StateError('Native player did not return an id.');
-    final controller = VerticalVideoController.internal(
+    final controller = HlsPlayerController.internal(
       id,
       localProxyUrl,
       textureId,

@@ -1,11 +1,12 @@
-name: vertical_sliding_video_example
-description: "Demonstrates how to use the vertical_sliding_video plugin."
+name: hls_cache_player_example
+description: "Demonstrates how to use the hls_cache_player plugin."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 
 environment:
-  sdk: ^3.12.2
+  sdk: '>=3.0.0 <4.0.0'
+  flutter: '>=3.10.0'
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -17,9 +18,9 @@ dependencies:
   flutter:
     sdk: flutter
 
-  vertical_sliding_video:
+  hls_cache_player:
     # When depending on this package from a real application you should use:
-    #   vertical_sliding_video: ^x.y.z
+    #   hls_cache_player: ^x.y.z
     # See https://dart.dev/tools/pub/dependencies#version-constraints
     # The example app is bundled with the plugin so we use a path dependency on
     # the parent directory to use the current plugin's version.

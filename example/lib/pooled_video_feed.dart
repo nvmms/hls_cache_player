@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:preload_page_view/preload_page_view.dart';
-import 'package:vertical_sliding_video/vertical_sliding_video.dart';
+import 'package:hls_cache_player/hls_cache_player.dart';
 
 /// The list owns no video controllers. Every visible post item independently
 /// acquires and releases its controller with its widget lifecycle.
@@ -30,8 +30,8 @@ class _PooledPostListPageState extends State<PooledPostListPage> {
     try {
       // A list can transiently have more than three mounted children because
       // ListView keeps a small cache extent. Feed pages normally use at most 3.
-      await VerticalVideoPool.configure(maxPlayers: 4);
-      _proxyUrls = await VerticalVideoPool.preloadAll(widget.videos);
+      await HlsCachePlayerPool.configure(maxPlayers: 4);
+      _proxyUrls = await HlsCachePlayerPool.preloadAll(widget.videos);
       if (mounted) setState(() => _ready = true);
     } catch (error, stackTrace) {
       debugPrint('视频初始化失败：$error');
@@ -119,7 +119,7 @@ class PostVideoItem extends StatefulWidget {
 }
 
 class PostVideoItemState extends State<PostVideoItem> {
-  VerticalVideoController? _controller;
+  HlsPlayerController? _controller;
   Future<void>? _pendingRelease;
   Object? _error;
   int _generation = 0;
@@ -148,7 +148,7 @@ class PostVideoItemState extends State<PostVideoItem> {
     if (_controller != null || !widget.enabled) return;
     final generation = ++_generation;
     try {
-      final controller = await VerticalVideoPool.acquire(
+      final controller = await HlsCachePlayerPool.acquire(
         widget.proxyUrl,
         autoPlay: widget.autoPlay,
       );
@@ -203,7 +203,7 @@ class PostVideoItemState extends State<PostVideoItem> {
           fit: StackFit.expand,
           children: [
             if (_controller case final controller?)
-              VerticalVideoPlayer(controller: controller)
+              HlsPlayerView(controller: controller)
             else
               const ColoredBox(color: Color(0xff202020)),
             if (_error != null) Center(child: Text('播放器初始化失败：$_error')),
@@ -302,7 +302,7 @@ class VerticalFeedVideoItem extends StatefulWidget {
 }
 
 class _VerticalFeedVideoItemState extends State<VerticalFeedVideoItem> {
-  VerticalVideoController? _controller;
+  HlsPlayerController? _controller;
   Object? _error;
   int _generation = 0;
 
@@ -325,7 +325,7 @@ class _VerticalFeedVideoItemState extends State<VerticalFeedVideoItem> {
   Future<void> _acquire() async {
     final generation = ++_generation;
     try {
-      final controller = await VerticalVideoPool.acquire(
+      final controller = await HlsCachePlayerPool.acquire(
         widget.proxyUrl,
         autoPlay: widget.shouldPlay,
       );
@@ -377,7 +377,7 @@ class _VerticalFeedVideoItemState extends State<VerticalFeedVideoItem> {
       fit: StackFit.expand,
       children: [
         if (_controller case final controller?)
-          VerticalVideoPlayer(controller: controller)
+          HlsPlayerView(controller: controller)
         else
           const ColoredBox(
             color: Colors.black,
@@ -408,7 +408,7 @@ class _VerticalFeedVideoItemState extends State<VerticalFeedVideoItem> {
 class _VideoProgressBar extends StatelessWidget {
   const _VideoProgressBar({required this.controller});
 
-  final VerticalVideoController controller;
+  final HlsPlayerController controller;
 
   @override
   Widget build(BuildContext context) {

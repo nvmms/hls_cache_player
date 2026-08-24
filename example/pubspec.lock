@@ -101,6 +101,13 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  hls_cache_player:
+    dependency: "direct main"
+    description:
+      path: ".."
+      relative: true
+    source: path
+    version: "0.0.1"
   integration_test:
     dependency: "direct dev"
     description: flutter
@@ -279,13 +286,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.2.0"
-  vertical_sliding_video:
-    dependency: "direct main"
-    description:
-      path: ".."
-      relative: true
-    source: path
-    version: "0.0.1"
   vm_service:
     dependency: transitive
     description:
@@ -303,5 +303,5 @@ packages:
     source: hosted
     version: "3.1.0"
 sdks:
-  dart: ">=3.12.2 <4.0.0"
+  dart: ">=3.10.0-0 <4.0.0"
   flutter: ">=3.18.0-18.0.pre.54"

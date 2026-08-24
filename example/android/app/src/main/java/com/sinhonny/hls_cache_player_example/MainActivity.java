@@ -1,4 +1,4 @@
-package com.sinhonny.vertical_sliding_video_example;
+package com.sinhonny.hls_cache_player_example;
 
 import io.flutter.embedding.android.FlutterActivity;
 

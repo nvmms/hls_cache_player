@@ -1,4 +1,4 @@
-package com.sinhonny.vertical_sliding_video;
+package com.sinhonny.hls_cache_player;
 
 import android.content.Context;
 import android.net.Uri;
@@ -50,7 +50,7 @@ import okhttp3.Response;
 
 /** Native Media3 implementation and bounded player/cache pools. */
 @UnstableApi
-public final class VerticalSlidingVideoPlugin
+public final class HlsCachePlayerPlugin
     implements FlutterPlugin, MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
   private MethodChannel methods;
   private EventChannel events;
@@ -62,9 +62,9 @@ public final class VerticalSlidingVideoPlugin
   public void onAttachedToEngine(@NonNull FlutterPluginBinding binding) {
     engine = new VideoEngine(
         binding.getApplicationContext(), binding.getTextureRegistry(), this::emit);
-    methods = new MethodChannel(binding.getBinaryMessenger(), "vertical_sliding_video/methods");
+    methods = new MethodChannel(binding.getBinaryMessenger(), "hls_cache_player/methods");
     methods.setMethodCallHandler(this);
-    events = new EventChannel(binding.getBinaryMessenger(), "vertical_sliding_video/events");
+    events = new EventChannel(binding.getBinaryMessenger(), "hls_cache_player/events");
     events.setStreamHandler(this);
   }
 
@@ -132,7 +132,7 @@ public final class VerticalSlidingVideoPlugin
           result.notImplemented();
       }
     } catch (Exception error) {
-      result.error("vertical_sliding_video", error.getMessage(), null);
+      result.error("hls_cache_player", error.getMessage(), null);
     }
   }
 
@@ -478,7 +478,7 @@ public final class VerticalSlidingVideoPlugin
 
     private synchronized void ensureDiskCache() {
       if (disk == null) {
-        disk = new SimpleCache(new File(context.getCacheDir(), "vertical_sliding_video"),
+        disk = new SimpleCache(new File(context.getCacheDir(), "hls_cache_player"),
             new LeastRecentlyUsedCacheEvictor(configuredDiskBytes));
       }
     }

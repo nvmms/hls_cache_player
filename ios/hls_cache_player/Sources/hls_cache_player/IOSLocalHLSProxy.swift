@@ -9,7 +9,7 @@ final class IOSLocalHLSProxy {
   }
 
   private let cache: IOSHLSCache
-  private let queue = DispatchQueue(label: "vertical_sliding_video.http_proxy")
+  private let queue = DispatchQueue(label: "hls_cache_player.http_proxy")
   private var listener: NWListener?
   private var port: UInt16?
   private var startCallbacks: [(Result<UInt16, Error>) -> Void] = []
@@ -165,7 +165,7 @@ final class IOSLocalHLSProxy {
         switch result {
         case .failure(let error):
           NSLog(
-            "vertical_sliding_video proxy upstream failure %@: %@",
+            "hls_cache_player proxy upstream failure %@: %@",
             route.url.absoluteString,
             error.localizedDescription
           )
