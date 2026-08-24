@@ -77,6 +77,9 @@ public final class VerticalSlidingVideoPlugin
               number(call, "diskCacheBytes", 768L * 1024 * 1024).longValue());
           result.success(null);
           break;
+        case "cacheDirectory":
+          result.success(engine.cacheDirectory());
+          break;
         case "preload":
           engine.preload(
               required(call, "cacheKey"),
@@ -87,8 +90,8 @@ public final class VerticalSlidingVideoPlugin
                   () -> result.error("preload", error.getMessage(), null)));
           break;
         case "acquire":
-          int playerId = engine.acquire(required(call, "cacheKey"), required(call, "url"),
-              headers(call), Boolean.TRUE.equals(call.argument("autoPlay")));
+          int playerId = engine.acquire(
+              required(call, "url"), Boolean.TRUE.equals(call.argument("autoPlay")));
           Map<String, Object> acquired = new LinkedHashMap<>();
           acquired.put("playerId", playerId);
           acquired.put("textureId", engine.textureId(playerId));
@@ -230,6 +233,8 @@ public final class VerticalSlidingVideoPlugin
       this.emitter = emitter;
     }
 
+    String cacheDirectory() { return context.getCacheDir().getAbsolutePath(); }
+
     synchronized void configure(int players, long memoryBytes, long diskBytes) {
       int normalizedPlayers = Math.max(1, players);
       long normalizedMemoryBytes = Math.max(1024 * 1024, memoryBytes);
@@ -248,24 +253,22 @@ public final class VerticalSlidingVideoPlugin
       maxPlayers = normalizedPlayers;
       memory.setMaxBytes(normalizedMemoryBytes);
       configuredDiskBytes = normalizedDiskBytes;
-      disk = new SimpleCache(new File(context.getCacheDir(), "vertical_sliding_video"),
-          new LeastRecentlyUsedCacheEvictor(configuredDiskBytes));
     }
 
-    synchronized int acquire(
-        String cacheKey, String url, Map<String, String> headers, boolean autoPlay) {
+    synchronized int acquire(String url, boolean autoPlay) {
       PlayerSlot slot = null;
       for (PlayerSlot item : slots.values()) {
-        if (cacheKey.equals(item.cacheKey)) { slot = item; break; }
+        if (url.equals(item.cacheKey)) { slot = item; break; }
       }
       boolean needsMedia = slot == null;
       if (slot == null) slot = obtainSlot();
-      slot.cacheKey = cacheKey;
+      slot.cacheKey = url;
       slot.leases++;
       slot.lastUsed = System.nanoTime();
       if (needsMedia) {
-        HlsMediaSource mediaSource = new HlsMediaSource.Factory(dataSourceFactory(headers, cacheKey))
-            .createMediaSource(new MediaItem.Builder().setUri(url).setCustomCacheKey(cacheKey).build());
+        DataSource.Factory localProxy = new DefaultDataSource.Factory(context);
+        HlsMediaSource mediaSource = new HlsMediaSource.Factory(localProxy)
+            .createMediaSource(MediaItem.fromUri(url));
         slot.player.setMediaSource(mediaSource);
         slot.player.prepare();
       }

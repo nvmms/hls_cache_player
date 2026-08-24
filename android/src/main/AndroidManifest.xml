@@ -1,3 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Required for the process-local HLS proxy on Android 9-16. The proxy
+         binds only to 127.0.0.1; host apps may replace this with a scoped
+         Network Security Config if they already provide one. -->
+    <application android:usesCleartextTraffic="true" />
 </manifest>

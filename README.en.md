@@ -79,11 +79,11 @@ const source = HlsVideoSource(
   headers: {'Authorization': 'Bearer token'},
 );
 
-await VerticalVideoPool.preload(source);
+final localUrl = await VerticalVideoPool.preload(source);
 ```
 
-Any widget can acquire the playback instance associated with the same
-`cacheKey`:
+`localUrl` is a standard loopback HTTP HLS URL available within the current
+app process. It can be used by this package or another HLS player:
 
 ```dart
 class VideoItemState extends State<VideoItem> {
@@ -97,7 +97,7 @@ class VideoItemState extends State<VideoItem> {
 
   Future<void> initializePlayer() async {
     final value = await VerticalVideoPool.acquire(
-      widget.source,
+      widget.localUrl,
       autoPlay: widget.autoPlay,
     );
     if (!mounted) {
@@ -124,11 +124,10 @@ class VideoItemState extends State<VideoItem> {
 }
 ```
 
-Application widgets do not need to pass a controller from one route to
-another. The pool looks up an existing native player by `cacheKey`:
+Application widgets do not need to pass a controller between routes:
 
 ```dart
-final controller = await VerticalVideoPool.acquire(source);
+final controller = await VerticalVideoPool.acquire(localUrl);
 ```
 
 If a player for the same `cacheKey` is still present in the pool, `acquire()`
@@ -146,8 +145,8 @@ The player pool has a fixed upper bound. A player remains idle in the pool
 after its final lease is released:
 
 ```text
-acquire(cacheKey)
-  → Matching cacheKey: return the existing player
+acquire(localUrl)
+  → Matching localUrl: return the existing player
   → No match: use an idle player or create a new one
 
 release()
@@ -171,9 +170,9 @@ are no longer visible or no longer need to remain prepared.
 
 The application supplies `cacheKey`. It is used to:
 
-- Find an existing player for the same video
 - Namespace the video's HLS cache resources
 - Coalesce concurrent requests for the same resource
+- Reuse playlists and segments after signed URLs are refreshed
 
 Change the key when the media contents, transcoding version, or authorization
 identity changes. For example:
@@ -195,8 +194,10 @@ signed URL as `cacheKey`.
 - fMP4 init map
 - First media segment
 
-Subsequent segments requested during playback go through the same cache layer.
-The lookup order is memory, disk, and then network.
+All playlist resources are rewritten to loopback URLs. Subsequent segments are
+downloaded only when requested by the player. The lookup order is memory, disk,
+and then network. Resource identity combines the stable `cacheKey` with the
+resource path while deliberately excluding signed query parameters.
 
 For a multivariant master playlist, the preloader currently warms the first
 variant. Media3 on Android and AVPlayer on iOS still perform the actual
@@ -207,15 +208,65 @@ also written to the disk cache.
 
 ### Android
 
-The Android implementation uses Media3 ExoPlayer, `SimpleCache`, and a custom
-memory-first `DataSource`.
+Android uses Media3 ExoPlayer to play the local HLS URL exposed by the Dart
+cache proxy. The proxy binds only to `127.0.0.1`, but Android 9 (API 28) and
+later may reject HTTP by default. The host app must allow cleartext HTTP for
+the local proxy.
+
+1. Create `android/app/src/main/res/xml/network_security_config.xml`:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+  <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
+```
+
+2. Update `<application>` in `android/app/src/main/AndroidManifest.xml`:
+
+```xml
+<application
+    android:name="${applicationName}"
+    android:usesCleartextTraffic="true"
+    android:networkSecurityConfig="@xml/network_security_config"
+    ...>
+```
+
+Also ensure the manifest contains:
+
+```xml
+<uses-permission android:name="android.permission.INTERNET" />
+```
+
+If the host does not declare a custom Network Security Config, the plugin's
+`usesCleartextTraffic="true"` is normally sufficient. Explicit host
+configuration is still recommended so manifest merging cannot replace the
+policy. This permits HTTP requests within the app; the package proxy itself
+only listens on loopback and is not exposed to the LAN. The example contains
+the complete configuration.
 
 ### iOS
 
-The minimum supported version is iOS 13.0. The implementation uses AVPlayer
-and AVAssetResourceLoader. Variant playlists, encryption keys, init maps,
-subtitles, and media segment URLs are rewritten to an internal caching
-protocol.
+The minimum supported version is iOS 13.0. AVPlayer plays the local HLS URL
+exposed by the native cache proxy.
+In the host's `ios/Runner/Info.plist`, add the following inside the top-level
+`<dict>`. If `NSAppTransportSecurity` already exists, merge these child keys
+instead of adding a second key with the same name:
+
+```xml
+<key>NSAppTransportSecurity</key>
+<dict>
+  <key>NSAllowsArbitraryLoadsForMedia</key>
+  <true/>
+  <key>NSAllowsLocalNetworking</key>
+  <true/>
+</dict>
+```
+
+Stop the running app and run `flutter run` again after this change; hot reload
+does not reload native network security settings. `NSAllowsLocalNetworking`
+allows the loopback connection, while `NSAllowsArbitraryLoadsForMedia` allows
+AVPlayer to load HTTP HLS resources returned by the proxy.
 
 ## Example
 
