@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -148,9 +149,18 @@ final class HlsCacheProxy {
       }
       await request.response.close();
     } catch (error, stack) {
-      stderr.writeln(
-          'vertical_sliding_video proxy request failed: $error\n$stack');
+      final message = 'HLS proxy failed for ${request.method} '
+          '${request.uri}: $error';
+      developer.log(
+        message,
+        name: 'vertical_sliding_video',
+        error: error,
+        stackTrace: stack,
+        level: 1000,
+      );
       request.response.statusCode = HttpStatus.badGateway;
+      request.response.headers.contentType = ContentType.text;
+      request.response.write(message);
       await request.response.close();
     }
   }
@@ -312,8 +322,13 @@ final class HlsCacheProxy {
   }
 
   bool _isPlaylist(Uri uri, Uint8List bytes) {
-    return uri.path.toLowerCase().endsWith('.m3u8') ||
-        (bytes.length >= 7 && utf8.decode(bytes.sublist(0, 7)) == '#EXTM3U');
+    if (uri.path.toLowerCase().endsWith('.m3u8')) return true;
+    const marker = <int>[0x23, 0x45, 0x58, 0x54, 0x4d, 0x33, 0x55];
+    if (bytes.length < marker.length) return false;
+    for (var index = 0; index < marker.length; index++) {
+      if (bytes[index] != marker[index]) return false;
+    }
+    return true;
   }
 
   String _contentType(Uri uri, bool playlist) {

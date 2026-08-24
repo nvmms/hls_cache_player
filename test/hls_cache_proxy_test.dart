@@ -41,7 +41,16 @@ seg2.ts?auth_key=second
 ''');
           break;
         case '/seg1.ts':
-          request.response.add(List<int>.filled(32, 1));
+          request.response.add(<int>[
+            0x47,
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            ...List<int>.filled(25, 1),
+          ]);
           break;
         case '/seg2.ts':
           request.response.add(List<int>.filled(48, 2));
@@ -88,8 +97,23 @@ seg2.ts?auth_key=second
     expect(Uri.parse(lines[0]).path, endsWith('/seg1.ts'));
 
     final first = await _read(client, Uri.parse(lines[0]));
-    expect(first, List<int>.filled(32, 1));
+    expect(first, hasLength(32));
+    expect(first.take(7), <int>[0x47, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
     expect(requests['/seg1.ts'], 1, reason: 'first segment should hit cache');
+
+    final rangeRequest = await client.getUrl(Uri.parse(lines[0]));
+    rangeRequest.headers.set(HttpHeaders.rangeHeader, 'bytes=4-11');
+    final rangeResponse = await rangeRequest.close();
+    expect(rangeResponse.statusCode, HttpStatus.partialContent);
+    expect(rangeResponse.headers.value(HttpHeaders.contentRangeHeader),
+        'bytes 4-11/32');
+    expect(
+      await rangeResponse.fold<List<int>>(
+        [],
+        (bytes, chunk) => bytes..addAll(chunk),
+      ),
+      <int>[0xff, 0xff, 0xff, ...List<int>.filled(5, 1)],
+    );
 
     final second = await _read(client, Uri.parse(lines[1]));
     expect(second, List<int>.filled(48, 2));

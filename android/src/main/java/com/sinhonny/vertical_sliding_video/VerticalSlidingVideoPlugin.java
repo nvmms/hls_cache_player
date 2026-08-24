@@ -15,6 +15,7 @@ import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DataSource;
 import androidx.media3.datasource.DataSpec;
 import androidx.media3.datasource.DefaultDataSource;
+import androidx.media3.datasource.HttpDataSource;
 import androidx.media3.datasource.TransferListener;
 import androidx.media3.datasource.cache.CacheDataSource;
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor;
@@ -319,7 +320,7 @@ public final class VerticalSlidingVideoPlugin
         }
         @Override public void onPlayerError(PlaybackException error) {
           Map<String, Object> event = event(id, "error");
-          event.put("message", error.getMessage());
+          event.put("message", errorWithCauses(error));
           emitter.emit(event);
         }
       });
@@ -366,6 +367,27 @@ public final class VerticalSlidingVideoPlugin
       event.put("playerId", id);
       event.put("type", type);
       return event;
+    }
+
+    private static String errorWithCauses(Throwable error) {
+      StringBuilder message = new StringBuilder();
+      Throwable current = error;
+      while (current != null) {
+        if (message.length() > 0) message.append("; caused by: ");
+        message.append(current.getClass().getSimpleName());
+        if (current.getMessage() != null && !current.getMessage().isEmpty()) {
+          message.append(": ").append(current.getMessage());
+        }
+        if (current instanceof HttpDataSource.InvalidResponseCodeException) {
+          byte[] body = ((HttpDataSource.InvalidResponseCodeException) current).responseBody;
+          if (body.length > 0) {
+            message.append("; response body: ")
+                .append(new String(body, StandardCharsets.UTF_8));
+          }
+        }
+        current = current.getCause();
+      }
+      return message.toString();
     }
 
     synchronized ExoPlayer player(int id) {
