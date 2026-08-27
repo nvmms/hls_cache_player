@@ -135,6 +135,22 @@ final controller = await HlsCachePlayerPool.acquire(localUrl);
 await controller.release();
 ```
 
+播放器状态还提供倍速和缓存指标：
+
+```dart
+await controller.setPlaySpeed(1.5);
+
+final value = controller.value;
+print(value.playSpeed);      // 当前播放倍速，例如 1.5
+print(value.duration);       // 总时长，例如 0:01:00.000000
+print(value.cacheProgress);  // 已缓存时长，例如 0:00:30.000000
+print(value.cacheProgressRatio); // 已缓存比例，例如 0.5
+print(value.cacheSpeed);     // 缓冲推进速度，例如 2.0 表示每秒缓存 2 秒媒体
+```
+
+`cacheProgress` 和 `duration` 都是 `Duration`。`cacheSpeed` 的单位是“媒体秒/自然秒”，用于跨 Android、iOS 一致地表示当前
+缓冲速度；没有新增缓冲数据时为 `0.0`。
+
 ## 播放实例的生命周期
 
 播放器池是有上限的。播放器没有租约后会留在空闲池中等待复用：

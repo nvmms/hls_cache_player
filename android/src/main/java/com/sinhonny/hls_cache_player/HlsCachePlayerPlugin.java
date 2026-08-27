@@ -117,6 +117,11 @@ public final class HlsCachePlayerPlugin
                   ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
           result.success(null);
           break;
+        case "setPlaySpeed":
+          engine.player(number(call, "playerId", -1).intValue())
+              .setPlaybackSpeed(number(call, "speed", 1.0).floatValue());
+          result.success(null);
+          break;
         case "getState":
           result.success(engine.state(number(call, "playerId", -1).intValue()));
           break;
@@ -267,6 +272,7 @@ public final class HlsCachePlayerPlugin
       slot.leases++;
       slot.lastUsed = System.nanoTime();
       if (needsMedia) {
+        slot.player.setPlaybackSpeed(1.0f);
         DataSource.Factory localProxy = new DefaultDataSource.Factory(context);
         HlsMediaSource mediaSource = new HlsMediaSource.Factory(localProxy)
             .createMediaSource(MediaItem.fromUri(url));
@@ -345,6 +351,7 @@ public final class HlsCachePlayerPlugin
       event.put("positionMs", player.getCurrentPosition());
       event.put("durationMs", Math.max(0, player.getDuration()));
       event.put("bufferedPositionMs", player.getBufferedPosition());
+      event.put("playSpeed", player.getPlaybackParameters().speed);
       event.put("videoWidth", player.getVideoSize().width);
       event.put("videoHeight", player.getVideoSize().height);
       return event;

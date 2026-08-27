@@ -24,6 +24,34 @@ void main() {
     expect(value.isInitialized, isFalse);
     expect(value.isBuffering, isFalse);
     expect(value.aspectRatio, 0);
+    expect(value.playSpeed, 1.0);
+    expect(value.cacheProgress, Duration.zero);
+    expect(value.cacheProgressRatio, 0.0);
+    expect(value.cacheSpeed, 0.0);
+  });
+
+  test('VideoPlayerValue exposes cache progress and speed', () {
+    const value = VideoPlayerValue(
+      duration: Duration(seconds: 10),
+      bufferedPosition: Duration(seconds: 4),
+      playSpeed: 1.5,
+      cacheSpeed: 3.25,
+    );
+
+    expect(value.cacheProgress, const Duration(seconds: 4));
+    expect(value.cacheProgressRatio, 0.4);
+    expect(value.playSpeed, 1.5);
+    expect(value.cacheSpeed, 3.25);
+  });
+
+  test('cache progress cannot exceed the known duration', () {
+    const value = VideoPlayerValue(
+      duration: Duration(seconds: 60),
+      bufferedPosition: Duration(seconds: 75),
+    );
+
+    expect(value.cacheProgress, const Duration(seconds: 60));
+    expect(value.cacheProgressRatio, 1.0);
   });
 
   test('VideoPlayerValue exposes derived playback state', () {

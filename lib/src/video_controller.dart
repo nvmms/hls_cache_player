@@ -27,6 +27,8 @@ class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
   late final StreamController<VideoPlayerValue> _stateController;
   late final StreamController<Duration> _positionController;
   bool _disposed = false;
+  DateTime? _lastBufferSampleAt;
+  Duration _lastBufferedPosition = Duration.zero;
 
   /// Complete snapshots. Read [value] when an immediate value is needed.
   Stream<VideoPlayerValue> get states => _stateController.stream;
@@ -40,6 +42,13 @@ class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
       _invoke('seekTo', {'positionMs': position.inMilliseconds});
   Future<void> setLooping(bool looping) =>
       _invoke('setLooping', {'looping': looping});
+  Future<void> setPlaySpeed(double speed) async {
+    if (!speed.isFinite || speed <= 0) {
+      throw ArgumentError.value(speed, 'speed', 'Must be finite and positive.');
+    }
+    await _invoke('setPlaySpeed', {'speed': speed});
+    if (!_disposed) _setValue(value.copyWith(playSpeed: speed));
+  }
 
   /// Fetches state directly so events sent while acquire was completing are
   /// not lost through the event channel.
@@ -75,6 +84,20 @@ class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
     }
     if (event['type'] != 'state') return;
     final rawState = (event['playbackState'] as num?)?.toInt() ?? 1;
+    final bufferedPosition = Duration(
+      milliseconds: (event['bufferedPositionMs'] as num?)?.toInt() ?? 0,
+    );
+    final now = DateTime.now();
+    final elapsedUs = _lastBufferSampleAt == null
+        ? 0
+        : now.difference(_lastBufferSampleAt!).inMicroseconds;
+    final bufferedDeltaUs =
+        bufferedPosition.inMicroseconds - _lastBufferedPosition.inMicroseconds;
+    final cacheSpeed = elapsedUs > 0 && bufferedDeltaUs > 0
+        ? bufferedDeltaUs / elapsedUs
+        : 0.0;
+    _lastBufferSampleAt = now;
+    _lastBufferedPosition = bufferedPosition;
     _setValue(value.copyWith(
       playbackState: switch (rawState) {
         2 => VideoPlaybackState.buffering,
@@ -89,9 +112,9 @@ class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
       duration: Duration(
         milliseconds: (event['durationMs'] as num?)?.toInt() ?? 0,
       ),
-      bufferedPosition: Duration(
-        milliseconds: (event['bufferedPositionMs'] as num?)?.toInt() ?? 0,
-      ),
+      bufferedPosition: bufferedPosition,
+      playSpeed: (event['playSpeed'] as num?)?.toDouble() ?? value.playSpeed,
+      cacheSpeed: cacheSpeed,
       videoWidth: (event['videoWidth'] as num?)?.toInt() ?? 0,
       videoHeight: (event['videoHeight'] as num?)?.toInt() ?? 0,
       clearError: true,

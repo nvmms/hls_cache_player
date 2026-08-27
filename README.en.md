@@ -139,6 +139,22 @@ successful `acquire()` must be paired with one `release()` or `dispose()`:
 await controller.release();
 ```
 
+Player state also exposes playback speed and buffering metrics:
+
+```dart
+await controller.setPlaySpeed(1.5);
+
+final value = controller.value;
+print(value.playSpeed);      // Current playback rate, for example 1.5
+print(value.duration);       // Total duration, for example 0:01:00.000000
+print(value.cacheProgress);  // Buffered duration, for example 0:00:30.000000
+print(value.cacheProgressRatio); // Buffered fraction, for example 0.5
+print(value.cacheSpeed);     // 2.0 means two media seconds buffered per second
+```
+
+`cacheProgress` and `duration` are both `Duration` values. `cacheSpeed` is measured in media-seconds per wall-clock second so it has the
+same meaning on Android and iOS. It is `0.0` while no new media is buffered.
+
 ## Player lifecycle
 
 The player pool has a fixed upper bound. A player remains idle in the pool

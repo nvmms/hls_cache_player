@@ -115,6 +115,13 @@ public final class HlsCachePlayerPlugin: NSObject, FlutterPlugin,
         )
         result(nil)
 
+      case "setPlaySpeed":
+        try engine.setPlaySpeed(
+          playerId(arguments),
+          speed: Float(arguments["speed"] as? Double ?? 1.0)
+        )
+        result(nil)
+
       case "getState":
         result(try engine.state(playerId(arguments)))
 

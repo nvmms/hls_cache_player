@@ -31,6 +31,8 @@ class VideoPlayerValue {
     this.position = Duration.zero,
     this.duration = Duration.zero,
     this.bufferedPosition = Duration.zero,
+    this.playSpeed = 1.0,
+    this.cacheSpeed = 0.0,
     this.videoWidth = 0,
     this.videoHeight = 0,
     this.error,
@@ -41,6 +43,13 @@ class VideoPlayerValue {
   final Duration position;
   final Duration duration;
   final Duration bufferedPosition;
+
+  /// Current playback rate, where `1.0` is normal speed.
+  final double playSpeed;
+
+  /// Rate at which playable media is being buffered, in media-seconds per
+  /// wall-clock second. A value of `2.0` means buffering is advancing at 2x.
+  final double cacheSpeed;
   final int videoWidth;
   final int videoHeight;
   final String? error;
@@ -53,12 +62,30 @@ class VideoPlayerValue {
   double get aspectRatio =>
       videoWidth > 0 && videoHeight > 0 ? videoWidth / videoHeight : 0;
 
+  /// Buffered media duration, capped at [duration] when it is known.
+  ///
+  /// For example, a 60-second video with 30 seconds buffered reports 30
+  /// seconds here.
+  Duration get cacheProgress => duration > Duration.zero &&
+          bufferedPosition > duration
+      ? duration
+      : bufferedPosition;
+
+  /// Fraction of [duration] currently buffered, clamped to 0...1.
+  double get cacheProgressRatio => duration > Duration.zero
+      ? (cacheProgress.inMilliseconds / duration.inMilliseconds)
+          .clamp(0.0, 1.0)
+          .toDouble()
+      : 0.0;
+
   VideoPlayerValue copyWith({
     VideoPlaybackState? playbackState,
     bool? isPlaying,
     Duration? position,
     Duration? duration,
     Duration? bufferedPosition,
+    double? playSpeed,
+    double? cacheSpeed,
     int? videoWidth,
     int? videoHeight,
     String? error,
@@ -70,6 +97,8 @@ class VideoPlayerValue {
         position: position ?? this.position,
         duration: duration ?? this.duration,
         bufferedPosition: bufferedPosition ?? this.bufferedPosition,
+        playSpeed: playSpeed ?? this.playSpeed,
+        cacheSpeed: cacheSpeed ?? this.cacheSpeed,
         videoWidth: videoWidth ?? this.videoWidth,
         videoHeight: videoHeight ?? this.videoHeight,
         error: clearError ? null : error ?? this.error,

@@ -37,6 +37,7 @@ private final class IOSPlayerSlot {
   var lastUsed = Date()
   var looping = false
   var wantsToPlay = false
+  var playSpeed: Float = 1.0
   var resourceLoader: IOSHLSResourceLoader?
   var timeControlObservation: NSKeyValueObservation?
   var itemStatusObservation: NSKeyValueObservation?
@@ -99,7 +100,7 @@ final class IOSVideoEngine {
       existing.lastUsed = Date()
       if autoPlay {
         existing.wantsToPlay = true
-        existing.player.play()
+        existing.player.playImmediately(atRate: existing.playSpeed)
       }
       return existing.id
     }
@@ -109,6 +110,7 @@ final class IOSVideoEngine {
     slot.leases = 1
     slot.lastUsed = Date()
     slot.wantsToPlay = autoPlay
+    slot.playSpeed = 1.0
 
     // Playback uses the loopback URL returned by preload. AVPlayer requests
     // playlist resources on demand and the native proxy serves cached bytes or
@@ -121,7 +123,7 @@ final class IOSVideoEngine {
     slot.player.replaceCurrentItem(with: item)
     installObservers(slot, item: item)
 
-    if autoPlay { slot.player.play() }
+    if autoPlay { slot.player.playImmediately(atRate: slot.playSpeed) }
     return slot.id
   }
 
@@ -132,7 +134,15 @@ final class IOSVideoEngine {
       return
     }
     slot.wantsToPlay = true
-    slot.player.play()
+    slot.player.playImmediately(atRate: slot.playSpeed)
+  }
+
+  func setPlaySpeed(_ id: Int, speed: Float) throws {
+    guard speed.isFinite, speed > 0 else { throw IOSVideoError.invalidSource }
+    let slot = try playerSlot(id)
+    slot.playSpeed = speed
+    if slot.player.timeControlStatus == .playing { slot.player.rate = speed }
+    emitState(slot)
   }
 
   func pause(_ id: Int) throws {
@@ -276,7 +286,7 @@ final class IOSVideoEngine {
         self.emitError(slot, item.error)
       } else {
         if item.status == .readyToPlay, slot.wantsToPlay {
-          slot.player.play()
+          slot.player.playImmediately(atRate: slot.playSpeed)
         }
         self.emitState(slot)
       }
@@ -290,7 +300,7 @@ final class IOSVideoEngine {
       guard let self, let slot else { return }
       if slot.looping {
         slot.player.seek(to: .zero)
-        slot.player.play()
+        slot.player.playImmediately(atRate: slot.playSpeed)
       } else {
         self.emitState(slot, ended: true)
       }
@@ -353,6 +363,7 @@ final class IOSVideoEngine {
       "bufferedPositionMs": milliseconds(
         item?.loadedTimeRanges.last?.timeRangeValue.end ?? .zero
       ),
+      "playSpeed": Double(slot.playSpeed),
       "videoWidth": Int(dimensions.width),
       "videoHeight": Int(dimensions.height),
       "itemStatus": item?.status.rawValue ?? -1,
