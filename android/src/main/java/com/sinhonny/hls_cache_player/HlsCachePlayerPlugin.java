@@ -278,8 +278,6 @@ public final class HlsCachePlayerPlugin
       if (distance <= 1) {
         return DefaultPreloadManager.PreloadStatus.specifiedRangeLoaded(3_000L);
       }
-      if (distance == 2) return DefaultPreloadManager.PreloadStatus.TRACKS_SELECTED;
-      if (distance <= 4) return DefaultPreloadManager.PreloadStatus.SOURCE_PREPARED;
       return null;
     }
   }

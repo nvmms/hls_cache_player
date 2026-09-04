@@ -115,6 +115,11 @@ class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
     String mediaId, {
     Duration position = Duration.zero,
   }) async {
+    final pendingInsertion = _pendingInsertions[mediaId];
+    if (pendingInsertion != null) await pendingInsertion;
+    if (!_urlsByMediaId.containsKey(mediaId)) {
+      throw StateError('mediaId $mediaId has not been inserted.');
+    }
     // Selecting an already selected queue item is a resume, not another
     // seek-to-zero. Page views may report their initial page more than once.
     if (_requestedMediaId == mediaId) {

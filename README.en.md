@@ -60,11 +60,10 @@ stable media IDs rather than indices because insertions and removals shift
 indices.
 
 On Android, the logical queue is registered with `DefaultPreloadManager`. The
-current item and its immediate neighbors preload three seconds of samples,
-items at distance two select tracks, and items at distance three or four
-prepare their media sources. Playback uses the same preloaded media source, so
-its prepared SampleQueue can be handed to the player. Switching does not
-destroy the Player, Surface, or Texture.
+current item and its immediate neighbors preload three seconds of samples.
+Playback uses the same preloaded media source, so its prepared SampleQueue can
+be handed to the player. Switching does not destroy the Player, Surface, or
+Texture.
 
 ## View and state
 

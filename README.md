@@ -58,8 +58,7 @@ await controller.removeAll(['video-2', 'video-3']);
 数组索引；插入和删除会改变索引。
 
 Android 的业务队列会同步给 `DefaultPreloadManager`。当前项及相邻一项预加载
-3 秒 Sample，距离 2 的项目提前完成轨道选择，距离 3～4 的项目提前准备
-MediaSource。播放时使用预热管理器返回的同一份 MediaSource，因此已经解析的
+3 秒 Sample。播放时使用预热管理器返回的同一份 MediaSource，因此已经解析的
 SampleQueue 可以直接交给播放器。视频切换不会销毁 Player、Surface 或 Texture。
 
 ## 显示与状态
