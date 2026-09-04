@@ -1,6 +1,7 @@
 {
     "schemaVersion": 1,
     "sdks": {
-        "flutter": "3.44.8"
+        "flutter": "3.44.8",
+        "java": "17.0.19"
     }
 }

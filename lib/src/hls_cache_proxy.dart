@@ -29,6 +29,16 @@ final class HlsCacheProxy {
   int _diskBytes = 768 * 1024 * 1024;
   int _memoryUsed = 0;
 
+  /// Returns cached media duration recorded by the proxy for [localUrl].
+  Duration? cacheProgressFor(String localUrl) {
+    final uri = Uri.tryParse(localUrl);
+    if (uri == null || uri.pathSegments.length < 2) return null;
+    final source = _sources[uri.pathSegments[1]];
+    return source == null
+        ? null
+        : Duration(milliseconds: source.cachedDurationMs);
+  }
+
   Future<void> configure({
     required int memoryCacheBytes,
     required int diskCacheBytes,
@@ -175,6 +185,7 @@ final class HlsCacheProxy {
       final memory = _memory.remove(key);
       if (memory != null) {
         _memory[key] = memory;
+        source.markCached(uri);
         return Future.value(memory);
       }
     }
@@ -185,6 +196,7 @@ final class HlsCacheProxy {
           final bytes = await file.readAsBytes();
           unawaited(file.setLastModified(DateTime.now()));
           _putMemory(key, bytes);
+          source.markCached(uri);
           return bytes;
         }
         final request = await _client.getUrl(uri);
@@ -201,6 +213,7 @@ final class HlsCacheProxy {
         final bytes = builder.takeBytes();
         await file.writeAsBytes(bytes, flush: false);
         _putMemory(key, bytes);
+        source.markCached(uri);
         unawaited(_trimDisk());
         return bytes;
       } finally {
@@ -272,8 +285,14 @@ final class HlsCacheProxy {
     Uint8List bytes,
   ) {
     final text = utf8.decode(bytes, allowMalformed: true);
+    double? pendingSegmentDuration;
     return text.split('\n').map((raw) {
       final line = raw.trim();
+      if (line.startsWith('#EXTINF:')) {
+        pendingSegmentDuration = double.tryParse(
+          line.substring('#EXTINF:'.length).split(',').first,
+        );
+      }
       if (line.startsWith('#')) {
         return line.replaceAllMapped(RegExp(r'URI="([^"]+)"'), (match) {
           final resolved = playlistUri.resolve(match.group(1)!);
@@ -281,7 +300,12 @@ final class HlsCacheProxy {
         });
       }
       if (line.isEmpty) return raw;
-      return _proxyUri(source, playlistUri.resolve(line)).toString();
+      final resolved = playlistUri.resolve(line);
+      if (pendingSegmentDuration case final seconds?) {
+        source.segmentDurationMs[resolved] = (seconds * 1000).round();
+        pendingSegmentDuration = null;
+      }
+      return _proxyUri(source, resolved).toString();
     }).join('\n');
   }
 
@@ -368,6 +392,16 @@ final class _RegisteredSource {
   final String token;
   final HlsVideoSource source;
   final Map<String, Uri> routes = {};
+  final Map<Uri, int> segmentDurationMs = {};
+  final Set<Uri> cachedSegments = {};
+  int cachedDurationMs = 0;
+
+  void markCached(Uri uri) {
+    final durationMs = segmentDurationMs[uri];
+    if (durationMs != null && cachedSegments.add(uri)) {
+      cachedDurationMs += durationMs;
+    }
+  }
 }
 
 extension<T> on List<T> {

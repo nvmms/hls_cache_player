@@ -34,6 +34,7 @@ void main() {
     const value = VideoPlayerValue(
       duration: Duration(seconds: 10),
       bufferedPosition: Duration(seconds: 4),
+      cacheProgress: Duration(seconds: 4),
       playSpeed: 1.5,
       cacheSpeed: 3.25,
     );
@@ -44,14 +45,27 @@ void main() {
     expect(value.cacheSpeed, 3.25);
   });
 
-  test('cache progress cannot exceed the known duration', () {
+  test('cache progress ratio cannot exceed the known duration', () {
     const value = VideoPlayerValue(
       duration: Duration(seconds: 60),
       bufferedPosition: Duration(seconds: 75),
+      cacheProgress: Duration(seconds: 75),
     );
 
-    expect(value.cacheProgress, const Duration(seconds: 60));
+    expect(value.cacheProgress, const Duration(seconds: 75));
     expect(value.cacheProgressRatio, 1.0);
+  });
+
+  test('copyWith can preserve a cache high-water mark across looping', () {
+    const firstPass = VideoPlayerValue(
+      duration: Duration(seconds: 60),
+      bufferedPosition: Duration(seconds: 60),
+      cacheProgress: Duration(seconds: 60),
+    );
+    final looped = firstPass.copyWith(position: Duration.zero);
+
+    expect(looped.cacheProgress, const Duration(seconds: 60));
+    expect(looped.cacheProgressRatio, 1.0);
   });
 
   test('VideoPlayerValue exposes derived playback state', () {
@@ -63,6 +77,33 @@ void main() {
 
     expect(value.isInitialized, isTrue);
     expect(value.aspectRatio, closeTo(16 / 9, 0.0001));
+  });
+
+  test('VideoPlayerValue tracks the stable queue identity', () {
+    const value = VideoPlayerValue(
+      mediaId: 'video-42',
+      mediaIndex: 7,
+      isSwitching: true,
+    );
+    final shifted = value.copyWith(mediaIndex: 5);
+
+    expect(shifted.mediaId, 'video-42');
+    expect(shifted.mediaIndex, 5);
+    expect(shifted.isSwitching, isTrue);
+    expect(shifted.copyWith(clearMedia: true).mediaId, isNull);
+    expect(shifted.copyWith(clearMedia: true).mediaIndex, -1);
+  });
+
+  test('HlsQueueItem serializes its stable identity and local URL', () {
+    const item = HlsQueueItem(
+      mediaId: 'video-42',
+      url: 'http://127.0.0.1:1234/video.m3u8',
+    );
+
+    expect(item.toMessage(), {
+      'mediaId': 'video-42',
+      'url': 'http://127.0.0.1:1234/video.m3u8',
+    });
   });
 
   test('VideoPlayerValue retains and explicitly clears errors', () {

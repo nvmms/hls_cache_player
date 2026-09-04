@@ -5,24 +5,17 @@ import 'hls_cache_proxy.dart';
 import 'video_controller.dart';
 import 'video_models.dart';
 
-/// Process-wide entry point for preloading and leasing native players.
+/// Process-wide entry point for preloading and one native playback session.
 class HlsCachePlayerPool {
   HlsCachePlayerPool._();
 
   static bool _configured = false;
 
   static Future<void> configure({
-    /// Number of idle native players retained for fast reuse.
-    ///
-    /// Active leases may temporarily exceed this value. Overflow players are
-    /// released instead of being retained when their final lease ends.
-    int maxPlayers = 3,
     int memoryCacheBytes = 48 * 1024 * 1024,
     int diskCacheBytes = 768 * 1024 * 1024,
   }) async {
-    if (maxPlayers < 1) throw ArgumentError.value(maxPlayers, 'maxPlayers');
     await NativeVideoBridge.methods.invokeMethod<void>('configure', {
-      'maxPlayers': maxPlayers,
       'memoryCacheBytes': memoryCacheBytes,
       'diskCacheBytes': diskCacheBytes,
     });
@@ -56,31 +49,15 @@ class HlsCachePlayerPool {
     return Future.wait(sources.map(preload));
   }
 
-  /// Leases a native player for a URL returned by [preload].
-  static Future<HlsPlayerController> acquire(
-    String localProxyUrl, {
-    bool autoPlay = false,
+  /// Creates the process-wide player and its fixed video output.
+  ///
+  /// The target application owns queue policy through [HlsPlayerController].
+  static Future<HlsPlayerController> createController({
     bool looping = true,
   }) async {
     await _ensureConfigured();
-    final uri = Uri.tryParse(localProxyUrl);
-    if (uri == null ||
-        uri.scheme != 'http' ||
-        (uri.host != '127.0.0.1' &&
-            uri.host != '::1' &&
-            uri.host != 'localhost')) {
-      throw ArgumentError.value(
-        localProxyUrl,
-        'localProxyUrl',
-        'Must be a loopback URL returned by preload().',
-      );
-    }
     final acquired = await NativeVideoBridge.methods.invokeMethod<Object?>(
-      'acquire',
-      {
-        'url': localProxyUrl,
-        'autoPlay': autoPlay,
-      },
+      'createPlayer',
     );
     final int? id;
     final int? textureId;
@@ -94,7 +71,6 @@ class HlsCachePlayerPool {
     if (id == null) throw StateError('Native player did not return an id.');
     final controller = HlsPlayerController.internal(
       id,
-      localProxyUrl,
       textureId,
     );
     await controller.refresh();

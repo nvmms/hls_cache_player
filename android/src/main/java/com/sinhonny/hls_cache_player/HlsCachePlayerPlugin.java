@@ -23,6 +23,9 @@ import androidx.media3.datasource.cache.SimpleCache;
 import androidx.media3.datasource.okhttp.OkHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.hls.HlsMediaSource;
+import androidx.media3.exoplayer.source.MediaSource;
+import androidx.media3.exoplayer.source.preload.DefaultPreloadManager;
+import androidx.media3.exoplayer.source.preload.TargetPreloadStatusControl;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
@@ -73,8 +76,7 @@ public final class HlsCachePlayerPlugin
     try {
       switch (call.method) {
         case "configure":
-          engine.configure(number(call, "maxPlayers", 3).intValue(),
-              number(call, "memoryCacheBytes", 48L * 1024 * 1024).longValue(),
+          engine.configure(number(call, "memoryCacheBytes", 48L * 1024 * 1024).longValue(),
               number(call, "diskCacheBytes", 768L * 1024 * 1024).longValue());
           result.success(null);
           break;
@@ -90,13 +92,32 @@ public final class HlsCachePlayerPlugin
               error -> mainHandler.post(
                   () -> result.error("preload", error.getMessage(), null)));
           break;
-        case "acquire":
-          int playerId = engine.acquire(
-              required(call, "url"), Boolean.TRUE.equals(call.argument("autoPlay")));
+        case "createPlayer":
+          int playerId = engine.createPlayer();
           Map<String, Object> acquired = new LinkedHashMap<>();
           acquired.put("playerId", playerId);
           acquired.put("textureId", engine.textureId(playerId));
           result.success(acquired);
+          break;
+        case "insert":
+          engine.insert(required(call, "mediaId"), required(call, "url"), optionalIndex(call));
+          result.success(null);
+          break;
+        case "insertAll":
+          engine.insertAll(queueItems(call), optionalIndex(call));
+          result.success(null);
+          break;
+        case "remove":
+          engine.remove(required(call, "mediaId"));
+          result.success(null);
+          break;
+        case "removeAll":
+          engine.removeAll(stringList(call, "mediaIds"));
+          result.success(null);
+          break;
+        case "playMedia":
+          engine.playMedia(required(call, "mediaId"), number(call, "positionMs", 0).longValue());
+          result.success(null);
           break;
         case "play":
           engine.player(number(call, "playerId", -1).intValue()).play();
@@ -126,7 +147,7 @@ public final class HlsCachePlayerPlugin
           result.success(engine.state(number(call, "playerId", -1).intValue()));
           break;
         case "release":
-          engine.releaseLease(number(call, "playerId", -1).intValue());
+          engine.releasePlayer(number(call, "playerId", -1).intValue());
           result.success(null);
           break;
         case "dispose":
@@ -150,6 +171,39 @@ public final class HlsCachePlayerPlugin
     String value = call.argument(name);
     if (value == null || value.isEmpty()) throw new IllegalArgumentException(name + " is required");
     return value;
+  }
+
+  private static Integer optionalIndex(MethodCall call) {
+    Number value = call.argument("index");
+    return value == null ? null : value.intValue();
+  }
+
+  @SuppressWarnings("unchecked")
+  private static List<Map<String, String>> queueItems(MethodCall call) {
+    Object raw = call.argument("items");
+    if (!(raw instanceof List)) throw new IllegalArgumentException("items is required");
+    List<Map<String, String>> output = new ArrayList<>();
+    for (Object item : (List<Object>) raw) {
+      if (!(item instanceof Map)) throw new IllegalArgumentException("Invalid queue item");
+      Map<Object, Object> map = (Map<Object, Object>) item;
+      Object mediaId = map.get("mediaId");
+      Object url = map.get("url");
+      if (mediaId == null || url == null) throw new IllegalArgumentException("Invalid queue item");
+      Map<String, String> parsed = new LinkedHashMap<>();
+      parsed.put("mediaId", String.valueOf(mediaId));
+      parsed.put("url", String.valueOf(url));
+      output.add(parsed);
+    }
+    return output;
+  }
+
+  @SuppressWarnings("unchecked")
+  private static List<String> stringList(MethodCall call, String name) {
+    Object raw = call.argument(name);
+    if (!(raw instanceof List)) throw new IllegalArgumentException(name + " is required");
+    List<String> output = new ArrayList<>();
+    for (Object value : (List<Object>) raw) output.add(String.valueOf(value));
+    return output;
   }
 
   @SuppressWarnings("unchecked")
@@ -189,9 +243,7 @@ public final class HlsCachePlayerPlugin
     final ExoPlayer player;
     final TextureRegistry.SurfaceTextureEntry texture;
     final Surface surface;
-    String cacheKey;
-    int leases;
-    long lastUsed;
+    final List<QueueEntry> queue = new ArrayList<>();
     PlayerSlot(
         int id,
         ExoPlayer player,
@@ -204,6 +256,32 @@ public final class HlsCachePlayerPlugin
     }
   }
 
+  private static final class QueueEntry {
+    final MediaItem mediaItem;
+    final int rankingIndex;
+
+    QueueEntry(MediaItem mediaItem, int rankingIndex) {
+      this.mediaItem = mediaItem;
+      this.rankingIndex = rankingIndex;
+    }
+  }
+
+  private static final class PreloadPolicy implements
+      TargetPreloadStatusControl<Integer, DefaultPreloadManager.PreloadStatus> {
+    int currentIndex;
+
+    @Override
+    public DefaultPreloadManager.PreloadStatus getTargetPreloadStatus(Integer index) {
+      int distance = Math.abs(index - currentIndex);
+      if (distance <= 1) {
+        return DefaultPreloadManager.PreloadStatus.specifiedRangeLoaded(3_000L);
+      }
+      if (distance == 2) return DefaultPreloadManager.PreloadStatus.TRACKS_SELECTED;
+      if (distance <= 4) return DefaultPreloadManager.PreloadStatus.SOURCE_PREPARED;
+      return null;
+    }
+  }
+
   private static final class VideoEngine {
     private static final long PROGRESS_INTERVAL_MS = 250;
     private final Context context;
@@ -213,8 +291,11 @@ public final class HlsCachePlayerPlugin
     private final ExecutorService workers = Executors.newFixedThreadPool(2);
     private final Map<Integer, PlayerSlot> slots = new LinkedHashMap<>();
     private final MemoryStore memory = new MemoryStore(48L * 1024 * 1024);
+    private final PreloadPolicy preloadPolicy = new PreloadPolicy();
+    private final HlsMediaSource.Factory hlsMediaSourceFactory;
+    private final DefaultPreloadManager.Builder preloadManagerBuilder;
+    private final DefaultPreloadManager preloadManager;
     private SimpleCache disk;
-    private int maxPlayers = 3;
     private int nextId = 1;
     private long configuredDiskBytes = 768L * 1024 * 1024;
     private final Handler progressHandler = new Handler(Looper.getMainLooper());
@@ -237,12 +318,15 @@ public final class HlsCachePlayerPlugin
       this.context = context;
       this.textures = textures;
       this.emitter = emitter;
+      hlsMediaSourceFactory = new HlsMediaSource.Factory(new DefaultDataSource.Factory(context));
+      preloadManagerBuilder = new DefaultPreloadManager.Builder(context, preloadPolicy)
+          .setMediaSourceFactory(hlsMediaSourceFactory);
+      preloadManager = preloadManagerBuilder.build();
     }
 
     String cacheDirectory() { return context.getCacheDir().getAbsolutePath(); }
 
-    synchronized void configure(int players, long memoryBytes, long diskBytes) {
-      int normalizedPlayers = Math.max(1, players);
+    synchronized void configure(long memoryBytes, long diskBytes) {
       long normalizedMemoryBytes = Math.max(1024 * 1024, memoryBytes);
       long normalizedDiskBytes = Math.max(16L * 1024 * 1024, diskBytes);
       if (disk != null) {
@@ -250,58 +334,23 @@ public final class HlsCachePlayerPlugin
         // this native engine. Treat the repeated configuration as idempotent.
         if (configuredDiskBytes != normalizedDiskBytes) {
           throw new IllegalStateException(
-              "diskCacheBytes cannot be changed after preload/acquire");
+              "diskCacheBytes cannot be changed after preload/player creation");
         }
-        maxPlayers = normalizedPlayers;
         memory.setMaxBytes(normalizedMemoryBytes);
         return;
       }
-      maxPlayers = normalizedPlayers;
       memory.setMaxBytes(normalizedMemoryBytes);
       configuredDiskBytes = normalizedDiskBytes;
     }
 
-    synchronized int acquire(String url, boolean autoPlay) {
-      PlayerSlot slot = null;
-      for (PlayerSlot item : slots.values()) {
-        if (url.equals(item.cacheKey)) { slot = item; break; }
-      }
-      boolean needsMedia = slot == null;
-      if (slot == null) slot = obtainSlot();
-      slot.cacheKey = url;
-      slot.leases++;
-      slot.lastUsed = System.nanoTime();
-      if (needsMedia) {
-        slot.player.setPlaybackSpeed(1.0f);
-        DataSource.Factory localProxy = new DefaultDataSource.Factory(context);
-        HlsMediaSource mediaSource = new HlsMediaSource.Factory(localProxy)
-            .createMediaSource(MediaItem.fromUri(url));
-        slot.player.setMediaSource(mediaSource);
-        slot.player.prepare();
-      }
-      if (autoPlay) slot.player.play();
-      return slot.id;
-    }
-
-    private PlayerSlot obtainSlot() {
-      if (slots.size() < maxPlayers) return createSlot();
-      PlayerSlot oldest = null;
-      for (PlayerSlot slot : slots.values()) {
-        if (slot.leases == 0 && (oldest == null || slot.lastUsed < oldest.lastUsed)) oldest = slot;
-      }
-      // maxPlayers is the number of players retained by the warm pool, not a
-      // hard acquire limit. Flutter scrollables can transiently keep more
-      // children mounted than their visible/preload window. Let those leases
-      // use overflow players and discard them as soon as they become idle.
-      if (oldest == null) return createSlot();
-      oldest.player.stop();
-      oldest.player.clearMediaItems();
-      return oldest;
+    synchronized int createPlayer() {
+      if (!slots.isEmpty()) return slots.values().iterator().next().id;
+      return createSlot().id;
     }
 
     private PlayerSlot createSlot() {
       int id = nextId++;
-      ExoPlayer player = new ExoPlayer.Builder(context).build();
+      ExoPlayer player = preloadManagerBuilder.buildExoPlayer();
       TextureRegistry.SurfaceTextureEntry texture = textures.createSurfaceTexture();
       Surface surface = new Surface(texture.surfaceTexture());
       player.setVideoSurface(surface);
@@ -324,6 +373,15 @@ public final class HlsCachePlayerPlugin
           }
           emitState(id, player);
         }
+        @Override public void onMediaItemTransition(MediaItem mediaItem, int reason) {
+          emitState(id, player);
+        }
+        @Override public void onRenderedFirstFrame() {
+          Map<String, Object> event = event(id, "firstFrame");
+          MediaItem current = player.getCurrentMediaItem();
+          event.put("mediaId", current == null ? null : current.mediaId);
+          emitter.emit(event);
+        }
         @Override public void onPlayerError(PlaybackException error) {
           Map<String, Object> event = event(id, "error");
           event.put("message", errorWithCauses(error));
@@ -332,6 +390,112 @@ public final class HlsCachePlayerPlugin
       });
       slots.put(id, slot);
       return slot;
+    }
+
+    private QueueEntry queueEntry(String mediaId, String url, int rankingIndex) {
+      MediaItem item = new MediaItem.Builder().setMediaId(mediaId).setUri(url).build();
+      return new QueueEntry(item, rankingIndex);
+    }
+
+    synchronized void insert(String mediaId, String url, Integer requestedIndex) {
+      PlayerSlot slot = onlySlot();
+      if (indexOf(slot, mediaId) >= 0) {
+        throw new IllegalArgumentException("Duplicate mediaId " + mediaId);
+      }
+      int index = requestedIndex == null ? slot.queue.size() : requestedIndex;
+      if (index < 0 || index > slot.queue.size()) {
+        throw new IndexOutOfBoundsException("index " + index);
+      }
+      QueueEntry entry = queueEntry(mediaId, url, index);
+      slot.queue.add(index, entry);
+      preloadManager.add(entry.mediaItem, entry.rankingIndex);
+      preloadManager.invalidate();
+    }
+
+    synchronized void insertAll(List<Map<String, String>> items, Integer requestedIndex) {
+      PlayerSlot slot = onlySlot();
+      int index = requestedIndex == null ? slot.queue.size() : requestedIndex;
+      if (index < 0 || index > slot.queue.size()) {
+        throw new IndexOutOfBoundsException("index " + index);
+      }
+      List<String> batchIds = new ArrayList<>();
+      for (Map<String, String> item : items) {
+        String mediaId = item.get("mediaId");
+        if (indexOf(slot, mediaId) >= 0 || batchIds.contains(mediaId)) {
+          throw new IllegalArgumentException("Duplicate mediaId " + mediaId);
+        }
+        batchIds.add(mediaId);
+      }
+      for (Map<String, String> item : items) {
+        QueueEntry entry = queueEntry(item.get("mediaId"), item.get("url"), index);
+        slot.queue.add(index++, entry);
+        preloadManager.add(entry.mediaItem, entry.rankingIndex);
+      }
+      preloadManager.invalidate();
+    }
+
+    synchronized void remove(String mediaId) {
+      PlayerSlot slot = onlySlot();
+      int index = indexOf(slot, mediaId);
+      if (index < 0) throw new IllegalArgumentException("Unknown mediaId " + mediaId);
+      MediaItem current = slot.player.getCurrentMediaItem();
+      if (current != null && mediaId.equals(current.mediaId)) {
+        throw new IllegalStateException("Cannot remove the currently playing mediaId " + mediaId);
+      }
+      QueueEntry entry = slot.queue.remove(index);
+      preloadManager.remove(entry.mediaItem);
+      preloadManager.invalidate();
+    }
+
+    synchronized void removeAll(List<String> mediaIds) {
+      PlayerSlot slot = onlySlot();
+      List<Integer> indices = new ArrayList<>();
+      for (String mediaId : mediaIds) {
+        int index = indexOf(slot, mediaId);
+        if (index < 0) throw new IllegalArgumentException("Unknown mediaId " + mediaId);
+        if (!indices.contains(index)) indices.add(index);
+      }
+      indices.sort(Collections.reverseOrder());
+      for (int index : indices) {
+        QueueEntry entry = slot.queue.get(index);
+        MediaItem current = slot.player.getCurrentMediaItem();
+        if (current != null && entry.mediaItem.mediaId.equals(current.mediaId)) {
+          throw new IllegalStateException(
+              "Cannot remove the currently playing mediaId " + entry.mediaItem.mediaId);
+        }
+      }
+      for (int index : indices) {
+        QueueEntry entry = slot.queue.remove(index);
+        preloadManager.remove(entry.mediaItem);
+      }
+      preloadManager.invalidate();
+    }
+
+    synchronized void playMedia(String mediaId, long positionMs) {
+      PlayerSlot slot = onlySlot();
+      int index = indexOf(slot, mediaId);
+      if (index < 0) throw new IllegalArgumentException("Unknown mediaId " + mediaId);
+      QueueEntry entry = slot.queue.get(index);
+      preloadPolicy.currentIndex = entry.rankingIndex;
+      preloadManager.setCurrentPlayingIndex(entry.rankingIndex);
+      MediaSource source = preloadManager.getMediaSource(entry.mediaItem);
+      if (source == null) source = hlsMediaSourceFactory.createMediaSource(entry.mediaItem);
+      slot.player.setMediaSource(source);
+      slot.player.seekTo(Math.max(0, positionMs));
+      slot.player.prepare();
+      slot.player.play();
+    }
+
+    private PlayerSlot onlySlot() {
+      if (slots.isEmpty()) throw new IllegalStateException("createPlayer must be called first");
+      return slots.values().iterator().next();
+    }
+
+    private int indexOf(PlayerSlot slot, String mediaId) {
+      for (int i = 0; i < slot.queue.size(); i++) {
+        if (mediaId.equals(slot.queue.get(i).mediaItem.mediaId)) return i;
+      }
+      return -1;
     }
 
     synchronized long textureId(int id) {
@@ -354,6 +518,9 @@ public final class HlsCachePlayerPlugin
       event.put("playSpeed", player.getPlaybackParameters().speed);
       event.put("videoWidth", player.getVideoSize().width);
       event.put("videoHeight", player.getVideoSize().height);
+      MediaItem current = player.getCurrentMediaItem();
+      event.put("mediaId", current == null ? null : current.mediaId);
+      event.put("mediaIndex", current == null ? -1 : player.getCurrentMediaItemIndex());
       return event;
     }
 
@@ -400,23 +567,20 @@ public final class HlsCachePlayerPlugin
     synchronized ExoPlayer player(int id) {
       PlayerSlot slot = slots.get(id);
       if (slot == null) throw new IllegalArgumentException("unknown playerId " + id);
-      slot.lastUsed = System.nanoTime();
       return slot.player;
     }
 
-    synchronized void releaseLease(int id) {
+    synchronized void releasePlayer(int id) {
       PlayerSlot slot = slots.get(id);
       if (slot == null) return;
-      slot.leases = Math.max(0, slot.leases - 1);
-      slot.lastUsed = System.nanoTime();
-      if (slot.leases != 0) return;
-      slot.player.pause();
-      if (slots.size() > maxPlayers) discardSlot(slot);
+      discardSlot(slot);
     }
 
     private void discardSlot(PlayerSlot slot) {
       slots.remove(slot.id);
       slot.player.release();
+      for (QueueEntry entry : slot.queue) preloadManager.remove(entry.mediaItem);
+      preloadManager.invalidate();
       slot.surface.release();
       slot.texture.release();
     }
@@ -476,6 +640,7 @@ public final class HlsCachePlayerPlugin
         slot.texture.release();
       }
       slots.clear();
+      preloadManager.release();
       workers.shutdownNow();
       if (disk != null) {
         try { disk.release(); } catch (Exception ignored) {}

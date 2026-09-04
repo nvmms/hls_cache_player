@@ -100,6 +100,10 @@ seg2.ts?auth_key=second
     expect(first, hasLength(32));
     expect(first.take(7), <int>[0x47, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
     expect(requests['/seg1.ts'], 1, reason: 'first segment should hit cache');
+    expect(
+      HlsCacheProxy.instance.cacheProgressFor(proxyUrl),
+      const Duration(seconds: 5),
+    );
 
     final rangeRequest = await client.getUrl(Uri.parse(lines[0]));
     rangeRequest.headers.set(HttpHeaders.rangeHeader, 'bytes=4-11');
@@ -118,6 +122,10 @@ seg2.ts?auth_key=second
     final second = await _read(client, Uri.parse(lines[1]));
     expect(second, List<int>.filled(48, 2));
     expect(requests['/seg2.ts'], 1);
+    expect(
+      HlsCacheProxy.instance.cacheProgressFor(proxyUrl),
+      const Duration(seconds: 10),
+    );
     await _read(client, Uri.parse(lines[1]));
     expect(requests['/seg2.ts'], 1, reason: 'later segments should persist');
 

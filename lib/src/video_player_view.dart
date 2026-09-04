@@ -25,10 +25,21 @@ class HlsPlayerView extends StatelessWidget {
           controller: controller,
           fit: fit,
         ),
-      TargetPlatform.iOS => UiKitView(
-          viewType: 'hls_cache_player/view',
-          creationParams: creationParams,
-          creationParamsCodec: const StandardMessageCodec(),
+      TargetPlatform.iOS => Stack(
+          fit: StackFit.expand,
+          children: [
+            UiKitView(
+              viewType: 'hls_cache_player/view',
+              creationParams: creationParams,
+              creationParamsCodec: const StandardMessageCodec(),
+            ),
+            ValueListenableBuilder(
+              valueListenable: controller,
+              builder: (context, value, child) => value.isSwitching
+                  ? const ColoredBox(color: Colors.black)
+                  : const SizedBox.shrink(),
+            ),
+          ],
         ),
       _ => const ColoredBox(
           color: Colors.black,
@@ -60,16 +71,28 @@ class _AndroidTexturePlayer extends StatelessWidget {
           valueListenable: controller,
           builder: (context, value, child) {
             if (value.videoWidth <= 0 || value.videoHeight <= 0) {
-              return Texture(textureId: textureId);
+              return Stack(
+                fit: StackFit.expand,
+                children: [
+                  Texture(textureId: textureId),
+                  if (value.isSwitching) const ColoredBox(color: Colors.black),
+                ],
+              );
             }
-            return FittedBox(
-              fit: fit,
-              clipBehavior: Clip.hardEdge,
-              child: SizedBox(
-                width: value.videoWidth.toDouble(),
-                height: value.videoHeight.toDouble(),
-                child: Texture(textureId: textureId),
-              ),
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                FittedBox(
+                  fit: fit,
+                  clipBehavior: Clip.hardEdge,
+                  child: SizedBox(
+                    width: value.videoWidth.toDouble(),
+                    height: value.videoHeight.toDouble(),
+                    child: Texture(textureId: textureId),
+                  ),
+                ),
+                if (value.isSwitching) const ColoredBox(color: Colors.black),
+              ],
             );
           },
         ),

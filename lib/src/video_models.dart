@@ -21,16 +21,39 @@ class HlsVideoSource {
       };
 }
 
+/// One application-managed entry in the native player's media queue.
+class HlsQueueItem {
+  const HlsQueueItem({required this.mediaId, required this.url})
+      : assert(mediaId != ''),
+        assert(url != '');
+
+  /// Stable application identifier. Queue operations use this instead of an
+  /// index because indices change after insertions and removals.
+  final String mediaId;
+
+  /// Loopback URL returned by [HlsCachePlayerPool.preload].
+  final String url;
+
+  Map<String, Object> toMessage() => <String, Object>{
+        'mediaId': mediaId,
+        'url': url,
+      };
+}
+
 enum VideoPlaybackState { idle, buffering, ready, ended }
 
 /// An immutable snapshot of one native player's complete observable state.
 class VideoPlayerValue {
   const VideoPlayerValue({
+    this.mediaId,
+    this.mediaIndex = -1,
+    this.isSwitching = false,
     this.playbackState = VideoPlaybackState.idle,
     this.isPlaying = false,
     this.position = Duration.zero,
     this.duration = Duration.zero,
     this.bufferedPosition = Duration.zero,
+    this.cacheProgress = Duration.zero,
     this.playSpeed = 1.0,
     this.cacheSpeed = 0.0,
     this.videoWidth = 0,
@@ -38,11 +61,20 @@ class VideoPlayerValue {
     this.error,
   });
 
+  final String? mediaId;
+  final int mediaIndex;
+
+  /// True after a queue selection until its first frame reaches the output.
+  final bool isSwitching;
+
   final VideoPlaybackState playbackState;
   final bool isPlaying;
   final Duration position;
   final Duration duration;
   final Duration bufferedPosition;
+
+  /// Media duration whose segments are present in the proxy cache.
+  final Duration cacheProgress;
 
   /// Current playback rate, where `1.0` is normal speed.
   final double playSpeed;
@@ -66,12 +98,8 @@ class VideoPlayerValue {
   ///
   /// For example, a 60-second video with 30 seconds buffered reports 30
   /// seconds here.
-  Duration get cacheProgress => duration > Duration.zero &&
-          bufferedPosition > duration
-      ? duration
-      : bufferedPosition;
-
-  /// Fraction of [duration] currently buffered, clamped to 0...1.
+  /// Fraction of [duration] currently present in the proxy cache, clamped to
+  /// 0...1.
   double get cacheProgressRatio => duration > Duration.zero
       ? (cacheProgress.inMilliseconds / duration.inMilliseconds)
           .clamp(0.0, 1.0)
@@ -79,11 +107,16 @@ class VideoPlayerValue {
       : 0.0;
 
   VideoPlayerValue copyWith({
+    String? mediaId,
+    int? mediaIndex,
+    bool? isSwitching,
+    bool clearMedia = false,
     VideoPlaybackState? playbackState,
     bool? isPlaying,
     Duration? position,
     Duration? duration,
     Duration? bufferedPosition,
+    Duration? cacheProgress,
     double? playSpeed,
     double? cacheSpeed,
     int? videoWidth,
@@ -92,11 +125,15 @@ class VideoPlayerValue {
     bool clearError = false,
   }) =>
       VideoPlayerValue(
+        mediaId: clearMedia ? null : mediaId ?? this.mediaId,
+        mediaIndex: clearMedia ? -1 : mediaIndex ?? this.mediaIndex,
+        isSwitching: isSwitching ?? this.isSwitching,
         playbackState: playbackState ?? this.playbackState,
         isPlaying: isPlaying ?? this.isPlaying,
         position: position ?? this.position,
         duration: duration ?? this.duration,
         bufferedPosition: bufferedPosition ?? this.bufferedPosition,
+        cacheProgress: cacheProgress ?? this.cacheProgress,
         playSpeed: playSpeed ?? this.playSpeed,
         cacheSpeed: cacheSpeed ?? this.cacheSpeed,
         videoWidth: videoWidth ?? this.videoWidth,

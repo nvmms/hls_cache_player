@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:preload_page_view/preload_page_view.dart';
 import 'package:hls_cache_player/hls_cache_player.dart';
+import 'package:preload_page_view/preload_page_view.dart';
+import 'package:visibility_detector/visibility_detector.dart';
 
-/// The list owns no video controllers. Every visible post item independently
-/// acquires and releases its controller with its widget lifecycle.
+/// One player is shared by the page; the application owns its queue policy.
 class PooledPostListPage extends StatefulWidget {
   const PooledPostListPage({required this.videos, super.key});
-
   final List<HlsVideoSource> videos;
 
   @override
@@ -14,11 +13,8 @@ class PooledPostListPage extends StatefulWidget {
 }
 
 class _PooledPostListPageState extends State<PooledPostListPage> {
-  final Map<int, GlobalKey<PostVideoItemState>> _itemKeys = {};
+  HlsPlayerController? _controller;
   Object? _error;
-  bool _ready = false;
-  bool _feedOpen = false;
-  List<String> _proxyUrls = const [];
 
   @override
   void initState() {
@@ -28,11 +24,15 @@ class _PooledPostListPageState extends State<PooledPostListPage> {
 
   Future<void> _prepare() async {
     try {
-      // A list can transiently have more than three mounted children because
-      // ListView keeps a small cache extent. Feed pages normally use at most 3.
-      await HlsCachePlayerPool.configure(maxPlayers: 4);
-      _proxyUrls = await HlsCachePlayerPool.preloadAll(widget.videos);
-      if (mounted) setState(() => _ready = true);
+      await HlsCachePlayerPool.configure();
+      final urls = await HlsCachePlayerPool.preloadAll(widget.videos);
+      final controller = await HlsCachePlayerPool.createController();
+      await controller.insertAll([
+        for (var i = 0; i < widget.videos.length; i++)
+          HlsQueueItem(mediaId: widget.videos[i].cacheKey, url: urls[i]),
+      ]);
+      if (!mounted) return controller.release();
+      setState(() => _controller = controller);
     } catch (error, stackTrace) {
       debugPrint('视频初始化失败：$error');
       debugPrintStack(stackTrace: stackTrace);
@@ -40,33 +40,23 @@ class _PooledPostListPageState extends State<PooledPostListPage> {
     }
   }
 
-  GlobalKey<PostVideoItemState> _keyFor(int index) {
-    return _itemKeys.putIfAbsent(index, () => GlobalKey<PostVideoItemState>());
+  Future<void> _openFeed(int index) async {
+    final controller = _controller;
+    if (controller == null) return;
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => VerticalFeedPage(
+        videos: widget.videos,
+        controller: controller,
+        initialPage: index,
+      ),
+    ));
+    await controller.pause();
   }
 
-  Future<void> _openFeed(int index) async {
-    // The list route remains mounted underneath the new route. Explicitly ask
-    // its mounted children to return their leases before the feed acquires its
-    // current/adjacent players.
-    setState(() => _feedOpen = true);
-    await Future.wait(
-      _itemKeys.values.map(
-        (key) => key.currentState?.releaseController() ?? Future<void>.value(),
-      ),
-    );
-    if (!mounted) return;
-
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => VerticalFeedPage(
-          videos: widget.videos,
-          proxyUrls: _proxyUrls,
-          initialPage: index,
-        ),
-      ),
-    );
-
-    if (mounted) setState(() => _feedOpen = false);
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
   }
 
   @override
@@ -74,170 +64,33 @@ class _PooledPostListPageState extends State<PooledPostListPage> {
     if (_error case final error?) {
       return Scaffold(body: Center(child: Text('初始化失败：$error')));
     }
-    if (!_ready) {
+    if (_controller == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     return Scaffold(
       appBar: AppBar(title: const Text('Post 列表')),
       body: ListView.builder(
         itemCount: widget.videos.length,
-        itemBuilder: (context, index) => PostVideoItem(
-          key: _keyFor(index),
-          source: widget.videos[index],
-          proxyUrl: _proxyUrls[index],
-          index: index,
-          enabled: !_feedOpen,
-          autoPlay: index == 0,
-          onOpen: () => _openFeed(index),
+        itemBuilder: (context, index) => ListTile(
+          leading: const Icon(Icons.play_circle_outline),
+          title: Text('视频 ${index + 1}'),
+          subtitle: Text(widget.videos[index].cacheKey),
+          onTap: () => _openFeed(index),
         ),
       ),
     );
   }
 }
 
-/// One post cell owns exactly one controller lease while [enabled].
-class PostVideoItem extends StatefulWidget {
-  const PostVideoItem({
-    required this.source,
-    required this.proxyUrl,
-    required this.index,
-    required this.enabled,
-    required this.autoPlay,
-    required this.onOpen,
-    super.key,
-  });
-
-  final HlsVideoSource source;
-  final String proxyUrl;
-  final int index;
-  final bool enabled;
-  final bool autoPlay;
-  final VoidCallback onOpen;
-
-  @override
-  State<PostVideoItem> createState() => PostVideoItemState();
-}
-
-class PostVideoItemState extends State<PostVideoItem> {
-  HlsPlayerController? _controller;
-  Future<void>? _pendingRelease;
-  Object? _error;
-  int _generation = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.enabled) _acquire();
-  }
-
-  @override
-  void didUpdateWidget(PostVideoItem oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.source.cacheKey != widget.source.cacheKey) {
-      releaseController().then((_) {
-        if (mounted && widget.enabled) _acquire();
-      });
-    } else if (!oldWidget.enabled && widget.enabled) {
-      _acquire();
-    } else if (oldWidget.enabled && !widget.enabled) {
-      releaseController();
-    }
-  }
-
-  Future<void> _acquire() async {
-    if (_controller != null || !widget.enabled) return;
-    final generation = ++_generation;
-    try {
-      final controller = await HlsCachePlayerPool.acquire(
-        widget.proxyUrl,
-        autoPlay: widget.autoPlay,
-      );
-      if (!mounted || !widget.enabled || generation != _generation) {
-        await controller.release();
-        return;
-      }
-      setState(() => _controller = controller);
-    } catch (error, stackTrace) {
-      debugPrint('列表视频播放器初始化失败：$error');
-      debugPrintStack(stackTrace: stackTrace);
-      if (mounted && generation == _generation) {
-        setState(() => _error = error);
-      }
-    }
-  }
-
-  Future<void> releaseController() async {
-    if (_pendingRelease case final pending?) {
-      await pending;
-      return;
-    }
-    _generation++;
-    final controller = _controller;
-    _controller = null;
-    if (mounted) setState(() {});
-    if (controller == null) return;
-    final release = controller.release();
-    _pendingRelease = release;
-    try {
-      await release;
-    } finally {
-      if (identical(_pendingRelease, release)) _pendingRelease = null;
-    }
-  }
-
-  @override
-  void dispose() {
-    _generation++;
-    _controller?.dispose();
-    _controller = null;
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: widget.onOpen,
-      child: SizedBox(
-        height: 280,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            if (_controller case final controller?)
-              HlsPlayerView(controller: controller)
-            else
-              const ColoredBox(color: Color(0xff202020)),
-            if (_error != null) Center(child: Text('播放器初始化失败：$_error')),
-            Positioned(
-              left: 16,
-              bottom: 50,
-              child: Text('视频 ${widget.index + 1} · 点击进入竖屏'),
-            ),
-            if (_controller case final controller?)
-              Positioned(
-                left: 12,
-                right: 12,
-                bottom: 0,
-                child: _VideoProgressBar(controller: controller),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// The feed only owns the current index. Each PageView child independently
-/// creates and disposes its native controller.
 class VerticalFeedPage extends StatefulWidget {
   const VerticalFeedPage({
     required this.videos,
-    required this.proxyUrls,
+    required this.controller,
     required this.initialPage,
     super.key,
   });
-
   final List<HlsVideoSource> videos;
-  final List<String> proxyUrls;
+  final HlsPlayerController controller;
   final int initialPage;
 
   @override
@@ -245,14 +98,33 @@ class VerticalFeedPage extends StatefulWidget {
 }
 
 class _VerticalFeedPageState extends State<VerticalFeedPage> {
-  late final PageController _pageController = PageController(
-    initialPage: widget.initialPage,
-  );
-  late int _currentIndex = widget.initialPage;
+  late final PreloadPageController _pages =
+      PreloadPageController(initialPage: widget.initialPage);
+  int? _requestedIndex;
+
+  int currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // _play(widget.initialPage);
+  }
+
+  Future<void> _play(int index) async {
+    if (_requestedIndex == index) return;
+    _requestedIndex = index;
+    try {
+      await widget.controller.playMedia(widget.videos[index].cacheKey);
+    } catch (_) {
+      if (_requestedIndex == index) _requestedIndex = null;
+      rethrow;
+    }
+  }
 
   @override
   void dispose() {
-    _pageController.dispose();
+    widget.controller.pause();
+    _pages.dispose();
     super.dispose();
   }
 
@@ -260,199 +132,55 @@ class _VerticalFeedPageState extends State<VerticalFeedPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: PreloadPageView.builder(
-        // controller: _pageController,
+        controller: _pages,
         scrollDirection: Axis.vertical,
         preloadPagesCount: 1,
-        // allowImplicitScrolling: true,
         itemCount: widget.videos.length,
-        onPageChanged: (index) => setState(() => _currentIndex = index),
-        itemBuilder: (context, index) => VerticalFeedVideoItem(
-          key: ValueKey(widget.videos[index].cacheKey),
-          source: widget.videos[index],
-          proxyUrl: widget.proxyUrls[index],
-          index: index,
-          shouldPlay: index == _currentIndex,
-        ),
+        itemBuilder: (context, index) {
+          return VisibilityDetector(
+            key: Key('my-widget-key-$index'),
+            onVisibilityChanged: (visibilityInfo) {
+              if (visibilityInfo.visibleFraction >= 1) {
+                _play(index);
+                setState(() {
+                  currentIndex = index;
+                });
+              }
+            },
+            child: Stack(
+              children: [
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 300), // 控制淡出速度
+                  transitionBuilder:
+                      (Widget child, Animation<double> animation) {
+                    // 自定义淡入淡出曲线
+                    return FadeTransition(
+                      opacity: animation,
+                      child: child,
+                    );
+                  },
+                  child: (currentIndex != index)
+                      ? Container(
+                          key: const ValueKey('visible'),
+                          color: Colors.amber,
+                        )
+                      : HlsPlayerView(controller: widget.controller),
+                ),
+                Align(
+                  alignment: Alignment.bottomLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 48),
+                    child: Text(
+                      '视频 ${index + 1}\n${widget.videos[index].cacheKey}',
+                      style: const TextStyle(color: Colors.white, fontSize: 18),
+                    ),
+                  ),
+                )
+              ],
+            ),
+          );
+        },
       ),
     );
-  }
-}
-
-/// One PageView child owns one controller from initState through dispose.
-///
-/// PageView.builder normally keeps the current and adjacent children mounted,
-/// which naturally prepares a small player window without a controller map in
-/// the parent page.
-class VerticalFeedVideoItem extends StatefulWidget {
-  const VerticalFeedVideoItem({
-    required this.source,
-    required this.proxyUrl,
-    required this.index,
-    required this.shouldPlay,
-    super.key,
-  });
-
-  final HlsVideoSource source;
-  final String proxyUrl;
-  final int index;
-  final bool shouldPlay;
-
-  @override
-  State<VerticalFeedVideoItem> createState() => _VerticalFeedVideoItemState();
-}
-
-class _VerticalFeedVideoItemState extends State<VerticalFeedVideoItem> {
-  HlsPlayerController? _controller;
-  Object? _error;
-  int _generation = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _acquire();
-  }
-
-  @override
-  void didUpdateWidget(VerticalFeedVideoItem oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.source.cacheKey != widget.source.cacheKey) {
-      _replaceSource();
-    } else if (oldWidget.shouldPlay != widget.shouldPlay) {
-      _applyPlaybackState();
-    }
-  }
-
-  Future<void> _acquire() async {
-    final generation = ++_generation;
-    try {
-      final controller = await HlsCachePlayerPool.acquire(
-        widget.proxyUrl,
-        autoPlay: widget.shouldPlay,
-      );
-      if (!mounted || generation != _generation) {
-        await controller.release();
-        return;
-      }
-      _controller = controller;
-      await _applyPlaybackState();
-      if (mounted) setState(() {});
-    } catch (error, stackTrace) {
-      debugPrint('竖屏视频播放器初始化失败：$error');
-      debugPrintStack(stackTrace: stackTrace);
-      if (mounted && generation == _generation) {
-        setState(() => _error = error);
-      }
-    }
-  }
-
-  Future<void> _replaceSource() async {
-    _generation++;
-    final previous = _controller;
-    _controller = null;
-    if (previous != null) await previous.release();
-    if (mounted) await _acquire();
-  }
-
-  Future<void> _applyPlaybackState() async {
-    final controller = _controller;
-    if (controller == null) return;
-    if (widget.shouldPlay) {
-      await controller.play();
-    } else {
-      await controller.pause();
-    }
-  }
-
-  @override
-  void dispose() {
-    _generation++;
-    _controller?.dispose();
-    _controller = null;
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        if (_controller case final controller?)
-          HlsPlayerView(controller: controller)
-        else
-          const ColoredBox(
-            color: Colors.black,
-            child: Center(child: CircularProgressIndicator()),
-          ),
-        if (_error != null) Center(child: Text('播放器初始化失败：$_error')),
-        Positioned(
-          left: 16,
-          right: 16,
-          bottom: 40,
-          child: Text(
-            '视频 ${widget.index + 1}\ncacheKey: ${widget.source.cacheKey}',
-            style: const TextStyle(fontSize: 18),
-          ),
-        ),
-        if (_controller case final controller?)
-          Positioned(
-            left: 12,
-            right: 12,
-            bottom: 8,
-            child: _VideoProgressBar(controller: controller),
-          ),
-      ],
-    );
-  }
-}
-
-class _VideoProgressBar extends StatelessWidget {
-  const _VideoProgressBar({required this.controller});
-
-  final HlsPlayerController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<VideoPlayerValue>(
-      stream: controller.states,
-      initialData: controller.value,
-      builder: (context, snapshot) {
-        final value = snapshot.data ?? controller.value;
-        final durationMs = value.duration.inMilliseconds;
-        final positionMs = value.position.inMilliseconds.clamp(0, durationMs);
-
-        return Row(
-          children: [
-            Text(
-              _formatDuration(value.position),
-              style: const TextStyle(fontSize: 11),
-            ),
-            Expanded(
-              child: Slider(
-                min: 0,
-                max: durationMs > 0 ? durationMs.toDouble() : 1,
-                value: positionMs.toDouble(),
-                onChanged: durationMs > 0
-                    ? (milliseconds) {
-                        controller.seekTo(
-                          Duration(milliseconds: milliseconds.round()),
-                        );
-                      }
-                    : null,
-              ),
-            ),
-            Text(
-              _formatDuration(value.duration),
-              style: const TextStyle(fontSize: 11),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  String _formatDuration(Duration duration) {
-    final minutes = duration.inMinutes;
-    final seconds = duration.inSeconds.remainder(60);
-    return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 }

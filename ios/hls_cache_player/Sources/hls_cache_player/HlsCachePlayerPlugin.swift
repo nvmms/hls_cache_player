@@ -50,7 +50,6 @@ public final class HlsCachePlayerPlugin: NSObject, FlutterPlugin,
       switch call.method {
       case "configure":
         engine.configure(
-          maxPlayers: int(arguments["maxPlayers"], fallback: 3),
           memoryCacheBytes: int(
             arguments["memoryCacheBytes"],
             fallback: 48 * 1024 * 1024
@@ -75,23 +74,38 @@ public final class HlsCachePlayerPlugin: NSObject, FlutterPlugin,
           }
         }
 
-      case "acquire":
-        guard
-          let urlString = arguments["url"] as? String,
-          let url = URL(string: urlString)
-        else {
-          throw IOSVideoError.invalidSource
-        }
-        let source = IOSVideoSource(
-          cacheKey: urlString,
-          url: url,
-          headers: [:]
+      case "createPlayer":
+        result(try engine.createPlayer())
+
+      case "insert":
+        try engine.insert(
+          mediaId: requiredString(arguments["mediaId"]),
+          url: try requiredURL(arguments["url"]),
+          at: optionalInt(arguments["index"])
         )
-        let playerId = try engine.acquire(
-          source,
-          autoPlay: arguments["autoPlay"] as? Bool ?? false
+        result(nil)
+
+      case "insertAll":
+        try engine.insertAll(
+          queueItems(arguments["items"]),
+          at: optionalInt(arguments["index"])
         )
-        result(playerId)
+        result(nil)
+
+      case "remove":
+        try engine.remove(mediaId: requiredString(arguments["mediaId"]))
+        result(nil)
+
+      case "removeAll":
+        try engine.removeAll(mediaIds: arguments["mediaIds"] as? [String] ?? [])
+        result(nil)
+
+      case "playMedia":
+        try engine.playMedia(
+          requiredString(arguments["mediaId"]),
+          positionMilliseconds: int64(arguments["positionMs"])
+        )
+        result(nil)
 
       case "play":
         try engine.play(playerId(arguments))
@@ -126,7 +140,7 @@ public final class HlsCachePlayerPlugin: NSObject, FlutterPlugin,
         result(try engine.state(playerId(arguments)))
 
       case "release":
-        engine.releaseLease(playerId(arguments))
+        engine.releasePlayer(playerId(arguments))
         result(nil)
 
       case "dispose":
@@ -180,6 +194,33 @@ public final class HlsCachePlayerPlugin: NSObject, FlutterPlugin,
 
   private func playerId(_ arguments: [String: Any]) -> Int {
     int(arguments["playerId"], fallback: -1)
+  }
+
+  private func requiredString(_ value: Any?) throws -> String {
+    guard let value = value as? String, !value.isEmpty else {
+      throw IOSVideoError.invalidSource
+    }
+    return value
+  }
+
+  private func requiredURL(_ value: Any?) throws -> URL {
+    guard let raw = value as? String, let url = URL(string: raw) else {
+      throw IOSVideoError.invalidSource
+    }
+    return url
+  }
+
+  private func optionalInt(_ value: Any?) -> Int? {
+    (value as? NSNumber)?.intValue
+  }
+
+  private func queueItems(_ value: Any?) throws -> [(String, URL)] {
+    guard let values = value as? [[String: Any]] else {
+      throw IOSVideoError.invalidSource
+    }
+    return try values.map {
+      (try requiredString($0["mediaId"]), try requiredURL($0["url"]))
+    }
   }
 
   private func int(_ value: Any?, fallback: Int = 0) -> Int {

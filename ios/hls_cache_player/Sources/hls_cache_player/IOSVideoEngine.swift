@@ -12,7 +12,6 @@ struct IOSVideoSource {
 enum IOSVideoError: LocalizedError {
   case invalidSource
   case unknownPlayer(Int)
-  case poolExhausted
   case invalidResponse(URL)
 
   var errorDescription: String? {
@@ -21,8 +20,6 @@ enum IOSVideoError: LocalizedError {
       return "cacheKey and a valid absolute url are required."
     case .unknownPlayer(let id):
       return "Unknown playerId \(id)."
-    case .poolExhausted:
-      return "All player pool entries are leased."
     case .invalidResponse(let url):
       return "The server returned an invalid response for \(url.absoluteString)."
     }
@@ -32,9 +29,6 @@ enum IOSVideoError: LocalizedError {
 private final class IOSPlayerSlot {
   let id: Int
   let player: AVPlayer
-  var cacheKey: String?
-  var leases = 0
-  var lastUsed = Date()
   var looping = false
   var wantsToPlay = false
   var playSpeed: Float = 1.0
@@ -43,6 +37,8 @@ private final class IOSPlayerSlot {
   var itemStatusObservation: NSKeyValueObservation?
   var endObserver: NSObjectProtocol?
   var timeObserver: Any?
+  var queue: [(mediaId: String, url: URL)] = []
+  var currentMediaId: String?
 
   init(id: Int) {
     self.id = id
@@ -59,7 +55,6 @@ final class IOSVideoEngine {
   private lazy var localProxy = IOSLocalHLSProxy(cache: cache)
   private var slots: [Int: IOSPlayerSlot] = [:]
   private var attachedViews: [Int: [WeakVideoView]] = [:]
-  private var maxPlayers = 3
   private var nextPlayerId = 1
 
   private let log = OSLog(
@@ -72,11 +67,9 @@ final class IOSVideoEngine {
   }
 
   func configure(
-    maxPlayers: Int,
     memoryCacheBytes: Int,
     diskCacheBytes: Int
   ) {
-    self.maxPlayers = max(1, maxPlayers)
     cache.configure(
       memoryCacheBytes: memoryCacheBytes,
       diskCacheBytes: diskCacheBytes
@@ -90,41 +83,93 @@ final class IOSVideoEngine {
     localProxy.preload(source, completion: completion)
   }
 
-  func acquire(_ source: IOSVideoSource, autoPlay: Bool) throws -> Int {
+  func createPlayer() throws -> Int {
     precondition(Thread.isMainThread)
-
-    if let existing = slots.values.first(where: {
-      $0.cacheKey == source.cacheKey
-    }) {
-      existing.leases += 1
-      existing.lastUsed = Date()
-      if autoPlay {
-        existing.wantsToPlay = true
-        existing.player.playImmediately(atRate: existing.playSpeed)
-      }
-      return existing.id
-    }
-
-    let slot = try obtainSlot()
-    slot.cacheKey = source.cacheKey
-    slot.leases = 1
-    slot.lastUsed = Date()
-    slot.wantsToPlay = autoPlay
-    slot.playSpeed = 1.0
-
-    // Playback uses the loopback URL returned by preload. AVPlayer requests
-    // playlist resources on demand and the native proxy serves cached bytes or
-    // fetches missing segments from the signed upstream URL.
-    let assetOptions: [String: Any] = source.headers.isEmpty
-      ? [:]
-      : ["AVURLAssetHTTPHeaderFieldsKey": source.headers]
-    let asset = AVURLAsset(url: source.url, options: assetOptions)
-    let item = AVPlayerItem(asset: asset)
-    slot.player.replaceCurrentItem(with: item)
-    installObservers(slot, item: item)
-
-    if autoPlay { slot.player.playImmediately(atRate: slot.playSpeed) }
+    if let slot = slots.values.first { return slot.id }
+    let slot = IOSPlayerSlot(id: nextPlayerId)
+    nextPlayerId += 1
+    slots[slot.id] = slot
     return slot.id
+  }
+
+  func insert(mediaId: String, url: URL, at requestedIndex: Int?) throws {
+    let slot = try onlySlot()
+    guard !slot.queue.contains(where: { $0.mediaId == mediaId }) else {
+      throw IOSVideoError.invalidSource
+    }
+    let index = requestedIndex ?? slot.queue.count
+    guard index >= 0, index <= slot.queue.count else {
+      throw IOSVideoError.invalidSource
+    }
+    slot.queue.insert((mediaId, url), at: index)
+    emitState(slot)
+  }
+
+  func insertAll(_ items: [(String, URL)], at requestedIndex: Int?) throws {
+    let slot = try onlySlot()
+    let index = requestedIndex ?? slot.queue.count
+    guard index >= 0, index <= slot.queue.count else {
+      throw IOSVideoError.invalidSource
+    }
+    let ids = items.map { $0.0 }
+    guard Set(ids).count == ids.count,
+          !ids.contains(where: { id in slot.queue.contains { $0.mediaId == id } })
+    else { throw IOSVideoError.invalidSource }
+    slot.queue.insert(contentsOf: items.map { (mediaId: $0.0, url: $0.1) }, at: index)
+    emitState(slot)
+  }
+
+  func remove(mediaId: String) throws {
+    let slot = try onlySlot()
+    guard let index = slot.queue.firstIndex(where: { $0.mediaId == mediaId }) else {
+      throw IOSVideoError.invalidSource
+    }
+    slot.queue.remove(at: index)
+    if slot.currentMediaId == mediaId {
+      removeObservers(slot)
+      slot.player.pause()
+      slot.player.replaceCurrentItem(with: nil)
+      slot.currentMediaId = nil
+    }
+    emitState(slot)
+  }
+
+  func removeAll(mediaIds: [String]) throws {
+    let slot = try onlySlot()
+    let ids = Set(mediaIds)
+    guard ids.allSatisfy({ id in slot.queue.contains { $0.mediaId == id } })
+    else { throw IOSVideoError.invalidSource }
+    let removesCurrent = slot.currentMediaId.map { ids.contains($0) } ?? false
+    slot.queue.removeAll { ids.contains($0.mediaId) }
+    if removesCurrent {
+      removeObservers(slot)
+      slot.player.pause()
+      slot.player.replaceCurrentItem(with: nil)
+      slot.currentMediaId = nil
+    }
+    emitState(slot)
+  }
+
+  func playMedia(_ mediaId: String, positionMilliseconds: Int64) throws {
+    let slot = try onlySlot()
+    guard let entry = slot.queue.first(where: { $0.mediaId == mediaId }) else {
+      throw IOSVideoError.invalidSource
+    }
+    if slot.currentMediaId != mediaId {
+      let item = AVPlayerItem(asset: AVURLAsset(url: entry.url))
+      slot.player.replaceCurrentItem(with: item)
+      slot.currentMediaId = mediaId
+      installObservers(slot, item: item)
+    }
+    let time = CMTime(value: max(0, positionMilliseconds), timescale: 1000)
+    slot.player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+    slot.wantsToPlay = true
+    slot.player.playImmediately(atRate: slot.playSpeed)
+  }
+
+  private func onlySlot() throws -> IOSPlayerSlot {
+    guard let slot = slots.values.first else { throw IOSVideoError.unknownPlayer(-1) }
+    return slot
   }
 
   func play(_ id: Int) throws {
@@ -169,14 +214,9 @@ final class IOSVideoEngine {
     state(try playerSlot(id))
   }
 
-  func releaseLease(_ id: Int) {
+  func releasePlayer(_ id: Int) {
     guard let slot = slots[id] else { return }
-    slot.leases = max(0, slot.leases - 1)
-    slot.lastUsed = Date()
-    guard slot.leases == 0 else { return }
-    slot.wantsToPlay = false
-    slot.player.pause()
-    if slots.count > maxPlayers { discardSlot(slot) }
+    discardSlot(slot)
   }
 
   private func discardSlot(_ slot: IOSPlayerSlot) {
@@ -200,6 +240,7 @@ final class IOSVideoEngine {
     }
     views.append(view)
     view.playerLayer.player = slot.player
+    view.onFirstFrame = { [weak self] in self?.emitFirstFrame(id) }
     attachedViews[id] = views.map(WeakVideoView.init)
   }
 
@@ -208,6 +249,7 @@ final class IOSVideoEngine {
     var views = liveViews(id)
     views.removeAll { $0 === view }
     view.playerLayer.player = nil
+    view.onFirstFrame = nil
     if wasCurrent, let slot = slots[id], let target = views.last {
       target.playerLayer.player = slot.player
     }
@@ -230,39 +272,8 @@ final class IOSVideoEngine {
     localProxy.stop()
   }
 
-  private func obtainSlot() throws -> IOSPlayerSlot {
-    if slots.count < maxPlayers {
-      let slot = IOSPlayerSlot(id: nextPlayerId)
-      nextPlayerId += 1
-      slots[slot.id] = slot
-      return slot
-    }
-
-    guard let slot = slots.values
-      .filter({ $0.leases == 0 })
-      .min(by: { $0.lastUsed < $1.lastUsed })
-    else {
-      // maxPlayers controls the warm players retained by the pool. A Flutter
-      // scrollable may transiently mount more children than that, so create an
-      // overflow player instead of failing the visible video's acquire. The
-      // overflow is discarded when its final lease is released.
-      let slot = IOSPlayerSlot(id: nextPlayerId)
-      nextPlayerId += 1
-      slots[slot.id] = slot
-      return slot
-    }
-    removeObservers(slot)
-    slot.player.pause()
-    slot.player.replaceCurrentItem(with: nil)
-    slot.resourceLoader?.cancelAll()
-    slot.resourceLoader = nil
-    slot.cacheKey = nil
-    return slot
-  }
-
   private func playerSlot(_ id: Int) throws -> IOSPlayerSlot {
     guard let slot = slots[id] else { throw IOSVideoError.unknownPlayer(id) }
-    slot.lastUsed = Date()
     return slot
   }
 
@@ -334,6 +345,15 @@ final class IOSVideoEngine {
     emit(state(slot, ended: ended))
   }
 
+  private func emitFirstFrame(_ id: Int) {
+    guard let slot = slots[id], let mediaId = slot.currentMediaId else { return }
+    emit([
+      "playerId": id,
+      "type": "firstFrame",
+      "mediaId": mediaId,
+    ])
+  }
+
   private func state(
     _ slot: IOSPlayerSlot,
     ended: Bool = false
@@ -363,6 +383,9 @@ final class IOSVideoEngine {
       "bufferedPositionMs": milliseconds(
         item?.loadedTimeRanges.last?.timeRangeValue.end ?? .zero
       ),
+      "cacheProgressMs": localProxy.cacheProgressMilliseconds(
+        for: (item?.asset as? AVURLAsset)?.url ?? URL(fileURLWithPath: "/")
+      ),
       "playSpeed": Double(slot.playSpeed),
       "videoWidth": Int(dimensions.width),
       "videoHeight": Int(dimensions.height),
@@ -370,6 +393,10 @@ final class IOSVideoEngine {
       "playerStatus": slot.player.status.rawValue,
       "timeControlStatus": slot.player.timeControlStatus.rawValue,
       "waitingReason": slot.player.reasonForWaitingToPlay?.rawValue ?? "",
+      "mediaId": slot.currentMediaId ?? NSNull(),
+      "mediaIndex": slot.currentMediaId.flatMap { id in
+        slot.queue.firstIndex(where: { $0.mediaId == id })
+      } ?? -1,
     ]
   }
 
@@ -427,6 +454,27 @@ private final class WeakVideoView {
 final class IOSPlayerContainerView: UIView {
   override class var layerClass: AnyClass { AVPlayerLayer.self }
   var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+  var onFirstFrame: (() -> Void)?
+  private var readyObservation: NSKeyValueObservation?
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    observeFirstFrame()
+  }
+
+  required init?(coder: NSCoder) {
+    super.init(coder: coder)
+    observeFirstFrame()
+  }
+
+  private func observeFirstFrame() {
+    readyObservation = playerLayer.observe(
+      \.isReadyForDisplay,
+      options: [.new]
+    ) { [weak self] layer, _ in
+      if layer.isReadyForDisplay { self?.onFirstFrame?() }
+    }
+  }
 }
 
 private final class IOSVideoPlatformView: NSObject, FlutterPlatformView {

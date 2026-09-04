@@ -14,6 +14,9 @@ final class IOSLocalHLSProxy {
   private var port: UInt16?
   private var startCallbacks: [(Result<UInt16, Error>) -> Void] = []
   private var routes: [String: Route] = [:]
+  private var segmentDurations: [String: Int] = [:]
+  private var cachedSegments: Set<String> = []
+  private var cachedDurationBySource: [String: Int] = [:]
 
   init(cache: IOSHLSCache) {
     self.cache = cache
@@ -48,7 +51,16 @@ final class IOSLocalHLSProxy {
       listener = nil
       port = nil
       routes.removeAll()
+      segmentDurations.removeAll()
+      cachedSegments.removeAll()
+      cachedDurationBySource.removeAll()
     }
+  }
+
+  func cacheProgressMilliseconds(for localURL: URL) -> Int {
+    let parts = localURL.pathComponents.filter { $0 != "/" }
+    guard parts.count >= 2 else { return 0 }
+    return queue.sync { cachedDurationBySource[parts[1]] ?? 0 }
   }
 
   private func ensureStarted(
@@ -171,6 +183,11 @@ final class IOSLocalHLSProxy {
           )
           self.send(connection, status: 502, type: "text/plain", body: Data())
         case .success(let original):
+          if let duration = self.segmentDurations[routeKey],
+             self.cachedSegments.insert(routeKey).inserted {
+            let sourceToken = String(routeKey.split(separator: "/").first ?? "")
+            self.cachedDurationBySource[sourceToken, default: 0] += duration
+          }
           let playlist = self.isPlaylist(original, url: route.url)
           let body = playlist
             ? self.rewritePlaylist(original, baseURL: route.url, source: route.source)
@@ -249,8 +266,13 @@ final class IOSLocalHLSProxy {
     source: IOSVideoSource
   ) -> Data {
     guard let text = String(data: data, encoding: .utf8), let port else { return data }
+    var pendingSegmentDuration: Double?
     let rewritten = text.components(separatedBy: .newlines).map { raw in
       let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+      if line.hasPrefix("#EXTINF:") {
+        let value = line.dropFirst("#EXTINF:".count).split(separator: ",").first
+        pendingSegmentDuration = value.flatMap { Double($0) }
+      }
       if line.hasPrefix("#") {
         guard
           let marker = line.range(of: "URI=\""),
@@ -267,7 +289,13 @@ final class IOSLocalHLSProxy {
       }
       guard !line.isEmpty, let url = URL(string: line, relativeTo: baseURL)?.absoluteURL
       else { return raw }
-      return proxyURL(source: source, resourceURL: url, port: port).absoluteString
+      let proxy = proxyURL(source: source, resourceURL: url, port: port)
+      if let seconds = pendingSegmentDuration {
+        let routeKey = "\(source.cacheKey.sha256)/\(String(url.absoluteString.sha256.prefix(24)))"
+        segmentDurations[routeKey] = Int((seconds * 1000).rounded())
+        pendingSegmentDuration = nil
+      }
+      return proxy.absoluteString
     }.joined(separator: "\n")
     return Data(rewritten.utf8)
   }

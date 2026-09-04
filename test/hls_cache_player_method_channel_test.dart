@@ -33,7 +33,7 @@ two.ts
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
       calls.add(call);
-      if (call.method == 'acquire') return 7;
+      if (call.method == 'createPlayer') return 7;
       if (call.method == 'cacheDirectory') return cacheDirectory.path;
       return null;
     });
@@ -47,7 +47,7 @@ two.ts
         .setMockMethodCallHandler(channel, null);
   });
 
-  test('pool forwards only the local proxy URL to acquire', () async {
+  test('controller forwards queue insertion and playback by mediaId', () async {
     await HlsCachePlayerPool.configure();
     final localUrl = await HlsCachePlayerPool.preload(
       HlsVideoSource(
@@ -55,34 +55,43 @@ two.ts
         url: 'http://${upstream.address.address}:${upstream.port}/video.m3u8',
       ),
     );
-    final controller = await HlsCachePlayerPool.acquire(localUrl);
+    final controller = await HlsCachePlayerPool.createController();
+    await controller.insert(HlsQueueItem(mediaId: 'video-1', url: localUrl));
+    await controller.playMedia('video-1');
+    await controller.remove('video-1');
 
-    final acquire = calls.firstWhere((call) => call.method == 'acquire');
-    expect(acquire.arguments, {
+    final insert = calls.firstWhere((call) => call.method == 'insert');
+    expect(insert.arguments, {
+      'playerId': 7,
+      'mediaId': 'video-1',
       'url': localUrl,
-      'autoPlay': false,
+    });
+    final play = calls.firstWhere((call) => call.method == 'playMedia');
+    expect(play.arguments, {
+      'playerId': 7,
+      'mediaId': 'video-1',
+      'positionMs': 0,
+    });
+    final remove = calls.firstWhere((call) => call.method == 'remove');
+    expect(remove.arguments, {
+      'playerId': 7,
+      'mediaId': 'video-1',
     });
     await controller.release();
   });
 
-  test('pool accepts an Android texture acquire response', () async {
+  test('pool accepts an Android texture create response', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
       calls.add(call);
-      if (call.method == 'acquire') {
+      if (call.method == 'createPlayer') {
         return <String, Object>{'playerId': 7, 'textureId': 11};
       }
       if (call.method == 'cacheDirectory') return cacheDirectory.path;
       return null;
     });
 
-    final localUrl = await HlsCachePlayerPool.preload(
-      HlsVideoSource(
-        cacheKey: 'texture-key',
-        url: 'http://${upstream.address.address}:${upstream.port}/video.m3u8',
-      ),
-    );
-    final controller = await HlsCachePlayerPool.acquire(localUrl);
+    final controller = await HlsCachePlayerPool.createController();
 
     expect(controller.playerId, 7);
     expect(controller.textureId, 11);
