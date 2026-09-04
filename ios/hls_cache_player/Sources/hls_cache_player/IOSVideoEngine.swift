@@ -94,7 +94,8 @@ final class IOSVideoEngine {
 
   func insert(mediaId: String, url: URL, at requestedIndex: Int?) throws {
     let slot = try onlySlot()
-    guard !slot.queue.contains(where: { $0.mediaId == mediaId }) else {
+    if let existing = slot.queue.first(where: { $0.mediaId == mediaId }) {
+      if existing.url == url { return }
       throw IOSVideoError.invalidSource
     }
     let index = requestedIndex ?? slot.queue.count
@@ -111,11 +112,19 @@ final class IOSVideoEngine {
     guard index >= 0, index <= slot.queue.count else {
       throw IOSVideoError.invalidSource
     }
-    let ids = items.map { $0.0 }
-    guard Set(ids).count == ids.count,
-          !ids.contains(where: { id in slot.queue.contains { $0.mediaId == id } })
-    else { throw IOSVideoError.invalidSource }
-    slot.queue.insert(contentsOf: items.map { (mediaId: $0.0, url: $0.1) }, at: index)
+    var accepted: [(mediaId: String, url: URL)] = []
+    for item in items {
+      if let existing = slot.queue.first(where: { $0.mediaId == item.0 }) {
+        if existing.url == item.1 { continue }
+        throw IOSVideoError.invalidSource
+      }
+      if let existing = accepted.first(where: { $0.mediaId == item.0 }) {
+        if existing.url == item.1 { continue }
+        throw IOSVideoError.invalidSource
+      }
+      accepted.append((mediaId: item.0, url: item.1))
+    }
+    slot.queue.insert(contentsOf: accepted, at: index)
     emitState(slot)
   }
 

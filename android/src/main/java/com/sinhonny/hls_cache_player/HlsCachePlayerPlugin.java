@@ -258,10 +258,12 @@ public final class HlsCachePlayerPlugin
 
   private static final class QueueEntry {
     final MediaItem mediaItem;
+    final String url;
     final int rankingIndex;
 
-    QueueEntry(MediaItem mediaItem, int rankingIndex) {
+    QueueEntry(MediaItem mediaItem, String url, int rankingIndex) {
       this.mediaItem = mediaItem;
+      this.url = url;
       this.rankingIndex = rankingIndex;
     }
   }
@@ -394,12 +396,14 @@ public final class HlsCachePlayerPlugin
 
     private QueueEntry queueEntry(String mediaId, String url, int rankingIndex) {
       MediaItem item = new MediaItem.Builder().setMediaId(mediaId).setUri(url).build();
-      return new QueueEntry(item, rankingIndex);
+      return new QueueEntry(item, url, rankingIndex);
     }
 
     synchronized void insert(String mediaId, String url, Integer requestedIndex) {
       PlayerSlot slot = onlySlot();
-      if (indexOf(slot, mediaId) >= 0) {
+      int existingIndex = indexOf(slot, mediaId);
+      if (existingIndex >= 0) {
+        if (url.equals(slot.queue.get(existingIndex).url)) return;
         throw new IllegalArgumentException("Duplicate mediaId " + mediaId);
       }
       int index = requestedIndex == null ? slot.queue.size() : requestedIndex;
@@ -419,14 +423,23 @@ public final class HlsCachePlayerPlugin
         throw new IndexOutOfBoundsException("index " + index);
       }
       List<String> batchIds = new ArrayList<>();
+      List<Map<String, String>> newItems = new ArrayList<>();
       for (Map<String, String> item : items) {
         String mediaId = item.get("mediaId");
-        if (indexOf(slot, mediaId) >= 0 || batchIds.contains(mediaId)) {
+        int existingIndex = indexOf(slot, mediaId);
+        if (existingIndex >= 0) {
+          if (item.get("url").equals(slot.queue.get(existingIndex).url)) continue;
+          throw new IllegalArgumentException("Duplicate mediaId " + mediaId);
+        }
+        int batchIndex = batchIds.indexOf(mediaId);
+        if (batchIndex >= 0) {
+          if (item.get("url").equals(newItems.get(batchIndex).get("url"))) continue;
           throw new IllegalArgumentException("Duplicate mediaId " + mediaId);
         }
         batchIds.add(mediaId);
+        newItems.add(item);
       }
-      for (Map<String, String> item : items) {
+      for (Map<String, String> item : newItems) {
         QueueEntry entry = queueEntry(item.get("mediaId"), item.get("url"), index);
         slot.queue.add(index++, entry);
         preloadManager.add(entry.mediaItem, entry.rankingIndex);

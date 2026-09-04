@@ -22,6 +22,7 @@ class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
   final int playerId;
   final int? textureId;
   final Map<String, String> _urlsByMediaId = <String, String>{};
+  final Map<String, Future<void>> _pendingInsertions = <String, Future<void>>{};
   late final StreamSubscription<Map<Object?, Object?>> _events;
   late final StreamController<VideoPlayerValue> _stateController;
   late final StreamController<Duration> _positionController;
@@ -47,11 +48,35 @@ class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
   /// Inserts one item. Existing [HlsQueueItem.mediaId] values are rejected.
   Future<void> insert(HlsQueueItem item, {int? index}) async {
     _assertLoopbackUrl(item.url);
-    await _invoke('insert', {
+    final existingUrl = _urlsByMediaId[item.mediaId];
+    if (existingUrl != null) {
+      if (existingUrl != item.url) {
+        throw StateError(
+          'mediaId ${item.mediaId} is already mapped to a different URL.',
+        );
+      }
+      await _pendingInsertions[item.mediaId];
+      return;
+    }
+
+    _urlsByMediaId[item.mediaId] = item.url;
+    final operation = _invoke('insert', {
       ...item.toMessage(),
       if (index != null) 'index': index,
     });
-    _urlsByMediaId[item.mediaId] = item.url;
+    _pendingInsertions[item.mediaId] = operation;
+    try {
+      await operation;
+    } catch (_) {
+      if (_urlsByMediaId[item.mediaId] == item.url) {
+        _urlsByMediaId.remove(item.mediaId);
+      }
+      rethrow;
+    } finally {
+      if (identical(_pendingInsertions[item.mediaId], operation)) {
+        _pendingInsertions.remove(item.mediaId);
+      }
+    }
   }
 
   /// Inserts a batch while preserving its order.

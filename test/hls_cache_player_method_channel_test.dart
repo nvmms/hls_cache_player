@@ -56,11 +56,13 @@ two.ts
       ),
     );
     final controller = await HlsCachePlayerPool.createController();
-    await controller.insert(HlsQueueItem(mediaId: 'video-1', url: localUrl));
+    final item = HlsQueueItem(mediaId: 'video-1', url: localUrl);
+    await Future.wait([controller.insert(item), controller.insert(item)]);
     await controller.playMedia('video-1');
     await controller.remove('video-1');
 
     final insert = calls.firstWhere((call) => call.method == 'insert');
+    expect(calls.where((call) => call.method == 'insert'), hasLength(1));
     expect(insert.arguments, {
       'playerId': 7,
       'mediaId': 'video-1',
