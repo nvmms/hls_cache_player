@@ -24,6 +24,7 @@ final class HlsCacheProxy {
   final Map<String, Future<Uint8List>> _inFlight = {};
   final LinkedHashMap<String, Uint8List> _memory = LinkedHashMap();
   HttpServer? _server;
+  Future<void>? _starting;
   Directory? _directory;
   int _memoryBytes = 48 * 1024 * 1024;
   int _diskBytes = 768 * 1024 * 1024;
@@ -45,8 +46,12 @@ final class HlsCacheProxy {
   Future<String> preload(HlsVideoSource source) async {
     await _ensureStarted();
     final token = sha256.convert(utf8.encode(source.cacheKey)).toString();
-    final registered = _RegisteredSource(token: token, source: source);
-    _sources[token] = registered;
+    // Keep routes alive for concurrent preloads and already-issued player URLs.
+    final registered = _sources.putIfAbsent(
+      token,
+      () => _RegisteredSource(token: token, source: source),
+    );
+    registered.source = source;
 
     final entry = Uri.parse(source.url);
     final entryBytes = await _load(registered, entry, refresh: true);
@@ -66,6 +71,7 @@ final class HlsCacheProxy {
   }
 
   Future<void> dispose() async {
+    await _starting;
     await _server?.close(force: true);
     _server = null;
     _sources.clear();
@@ -76,6 +82,15 @@ final class HlsCacheProxy {
 
   Future<void> _ensureStarted() async {
     if (_server != null) return;
+    final starting = _starting ??= _start();
+    try {
+      await starting;
+    } finally {
+      if (identical(_starting, starting)) _starting = null;
+    }
+  }
+
+  Future<void> _start() async {
     final root = await NativeVideoBridge.methods.invokeMethod<String>(
       'cacheDirectory',
     );
@@ -366,7 +381,7 @@ final class _RegisteredSource {
   _RegisteredSource({required this.token, required this.source});
 
   final String token;
-  final HlsVideoSource source;
+  HlsVideoSource source;
   final Map<String, Uri> routes = {};
 }
 

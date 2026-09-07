@@ -11,14 +11,19 @@ void main() {
   late Directory cacheDirectory;
   late HttpServer upstream;
   late Map<String, int> requests;
+  late int cacheDirectoryCalls;
 
   setUp(() async {
     HttpOverrides.global = null;
     cacheDirectory = await Directory.systemTemp.createTemp('vsv_proxy_test_');
     requests = {};
+    cacheDirectoryCalls = 0;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
-      if (call.method == 'cacheDirectory') return cacheDirectory.path;
+      if (call.method == 'cacheDirectory') {
+        cacheDirectoryCalls++;
+        return cacheDirectory.path;
+      }
       return null;
     });
     upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -68,6 +73,28 @@ seg2.ts?auth_key=second
     await cacheDirectory.delete(recursive: true);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
+  });
+
+  test('concurrent preloads preserve every route and start one server',
+      () async {
+    final origin = 'http://${upstream.address.address}:${upstream.port}';
+    final urls = await Future.wait(List.generate(8, (index) {
+      return HlsCacheProxy.instance.preload(HlsVideoSource(
+        cacheKey: 'concurrent-video',
+        url: '$origin/video.m3u8?auth_key=$index',
+      ));
+    }));
+    expect(cacheDirectoryCalls, 1);
+    expect(urls.map((url) => Uri.parse(url).port).toSet(), hasLength(1));
+    final client = HttpClient();
+    try {
+      for (final url in urls) {
+        expect(utf8.decode(await _read(client, Uri.parse(url))),
+            startsWith('#EXTM3U'));
+      }
+    } finally {
+      client.close(force: true);
+    }
   });
 
   test('preload returns a proxy playlist and warms only the first segment',
@@ -129,6 +156,9 @@ seg2.ts?auth_key=second
     );
     expect(requests['/video.m3u8'], 2, reason: 'playlist signatures refresh');
     expect(requests['/seg1.ts'], 1, reason: 'stable segments remain cached');
+    // Signature refresh must not invalidate URLs held by an existing player.
+    await _read(client, Uri.parse(proxyUrl));
+    await _read(client, Uri.parse(lines[1]));
     client.close(force: true);
   });
 }
