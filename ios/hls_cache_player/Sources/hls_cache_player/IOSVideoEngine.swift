@@ -85,15 +85,14 @@ final class IOSVideoEngine {
 
   func createPlayer() throws -> Int {
     precondition(Thread.isMainThread)
-    if let slot = slots.values.first { return slot.id }
     let slot = IOSPlayerSlot(id: nextPlayerId)
     nextPlayerId += 1
     slots[slot.id] = slot
     return slot.id
   }
 
-  func insert(mediaId: String, url: URL, at requestedIndex: Int?) throws {
-    let slot = try onlySlot()
+  func insert(_ id: Int, mediaId: String, url: URL, at requestedIndex: Int?) throws {
+    let slot = try playerSlot(id)
     if let existing = slot.queue.first(where: { $0.mediaId == mediaId }) {
       if existing.url == url { return }
       throw IOSVideoError.invalidSource
@@ -106,8 +105,8 @@ final class IOSVideoEngine {
     emitState(slot)
   }
 
-  func insertAll(_ items: [(String, URL)], at requestedIndex: Int?) throws {
-    let slot = try onlySlot()
+  func insertAll(_ id: Int, items: [(String, URL)], at requestedIndex: Int?) throws {
+    let slot = try playerSlot(id)
     let index = requestedIndex ?? slot.queue.count
     guard index >= 0, index <= slot.queue.count else {
       throw IOSVideoError.invalidSource
@@ -128,8 +127,8 @@ final class IOSVideoEngine {
     emitState(slot)
   }
 
-  func remove(mediaId: String) throws {
-    let slot = try onlySlot()
+  func remove(_ id: Int, mediaId: String) throws {
+    let slot = try playerSlot(id)
     guard let index = slot.queue.firstIndex(where: { $0.mediaId == mediaId }) else {
       throw IOSVideoError.invalidSource
     }
@@ -143,8 +142,8 @@ final class IOSVideoEngine {
     emitState(slot)
   }
 
-  func removeAll(mediaIds: [String]) throws {
-    let slot = try onlySlot()
+  func removeAll(_ id: Int, mediaIds: [String]) throws {
+    let slot = try playerSlot(id)
     let ids = Set(mediaIds)
     guard ids.allSatisfy({ id in slot.queue.contains { $0.mediaId == id } })
     else { throw IOSVideoError.invalidSource }
@@ -159,8 +158,8 @@ final class IOSVideoEngine {
     emitState(slot)
   }
 
-  func playMedia(_ mediaId: String, positionMilliseconds: Int64) throws {
-    let slot = try onlySlot()
+  func playMedia(_ id: Int, mediaId: String, positionMilliseconds: Int64) throws {
+    let slot = try playerSlot(id)
     guard let entry = slot.queue.first(where: { $0.mediaId == mediaId }) else {
       throw IOSVideoError.invalidSource
     }
@@ -174,11 +173,6 @@ final class IOSVideoEngine {
     slot.player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
     slot.wantsToPlay = true
     slot.player.playImmediately(atRate: slot.playSpeed)
-  }
-
-  private func onlySlot() throws -> IOSPlayerSlot {
-    guard let slot = slots.values.first else { throw IOSVideoError.unknownPlayer(-1) }
-    return slot
   }
 
   func play(_ id: Int) throws {

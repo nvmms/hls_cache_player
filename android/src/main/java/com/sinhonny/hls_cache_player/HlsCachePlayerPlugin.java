@@ -100,23 +100,23 @@ public final class HlsCachePlayerPlugin
           result.success(acquired);
           break;
         case "insert":
-          engine.insert(required(call, "mediaId"), required(call, "url"), optionalIndex(call));
+          engine.insert(number(call, "playerId", -1).intValue(), required(call, "mediaId"), required(call, "url"), optionalIndex(call));
           result.success(null);
           break;
         case "insertAll":
-          engine.insertAll(queueItems(call), optionalIndex(call));
+          engine.insertAll(number(call, "playerId", -1).intValue(), queueItems(call), optionalIndex(call));
           result.success(null);
           break;
         case "remove":
-          engine.remove(required(call, "mediaId"));
+          engine.remove(number(call, "playerId", -1).intValue(), required(call, "mediaId"));
           result.success(null);
           break;
         case "removeAll":
-          engine.removeAll(stringList(call, "mediaIds"));
+          engine.removeAll(number(call, "playerId", -1).intValue(), stringList(call, "mediaIds"));
           result.success(null);
           break;
         case "playMedia":
-          engine.playMedia(required(call, "mediaId"), number(call, "positionMs", 0).longValue());
+          engine.playMedia(number(call, "playerId", -1).intValue(), required(call, "mediaId"), number(call, "positionMs", 0).longValue());
           result.success(null);
           break;
         case "play":
@@ -243,16 +243,22 @@ public final class HlsCachePlayerPlugin
     final ExoPlayer player;
     final TextureRegistry.SurfaceTextureEntry texture;
     final Surface surface;
+    final PreloadPolicy preloadPolicy;
+    final DefaultPreloadManager preloadManager;
     final List<QueueEntry> queue = new ArrayList<>();
     PlayerSlot(
         int id,
         ExoPlayer player,
         TextureRegistry.SurfaceTextureEntry texture,
-        Surface surface) {
+        Surface surface,
+        PreloadPolicy preloadPolicy,
+        DefaultPreloadManager preloadManager) {
       this.id = id;
       this.player = player;
       this.texture = texture;
       this.surface = surface;
+      this.preloadPolicy = preloadPolicy;
+      this.preloadManager = preloadManager;
     }
   }
 
@@ -291,10 +297,7 @@ public final class HlsCachePlayerPlugin
     private final ExecutorService workers = Executors.newFixedThreadPool(2);
     private final Map<Integer, PlayerSlot> slots = new LinkedHashMap<>();
     private final MemoryStore memory = new MemoryStore(48L * 1024 * 1024);
-    private final PreloadPolicy preloadPolicy = new PreloadPolicy();
     private final HlsMediaSource.Factory hlsMediaSourceFactory;
-    private final DefaultPreloadManager.Builder preloadManagerBuilder;
-    private final DefaultPreloadManager preloadManager;
     private SimpleCache disk;
     private int nextId = 1;
     private long configuredDiskBytes = 768L * 1024 * 1024;
@@ -319,9 +322,6 @@ public final class HlsCachePlayerPlugin
       this.textures = textures;
       this.emitter = emitter;
       hlsMediaSourceFactory = new HlsMediaSource.Factory(new DefaultDataSource.Factory(context));
-      preloadManagerBuilder = new DefaultPreloadManager.Builder(context, preloadPolicy)
-          .setMediaSourceFactory(hlsMediaSourceFactory);
-      preloadManager = preloadManagerBuilder.build();
     }
 
     String cacheDirectory() { return context.getCacheDir().getAbsolutePath(); }
@@ -344,17 +344,20 @@ public final class HlsCachePlayerPlugin
     }
 
     synchronized int createPlayer() {
-      if (!slots.isEmpty()) return slots.values().iterator().next().id;
       return createSlot().id;
     }
 
     private PlayerSlot createSlot() {
       int id = nextId++;
-      ExoPlayer player = preloadManagerBuilder.buildExoPlayer();
+      PreloadPolicy preloadPolicy = new PreloadPolicy();
+      DefaultPreloadManager.Builder builder = new DefaultPreloadManager.Builder(context, preloadPolicy)
+          .setMediaSourceFactory(hlsMediaSourceFactory);
+      DefaultPreloadManager preloadManager = builder.build();
+      ExoPlayer player = builder.buildExoPlayer();
       TextureRegistry.SurfaceTextureEntry texture = textures.createSurfaceTexture();
       Surface surface = new Surface(texture.surfaceTexture());
       player.setVideoSurface(surface);
-      PlayerSlot slot = new PlayerSlot(id, player, texture, surface);
+      PlayerSlot slot = new PlayerSlot(id, player, texture, surface, preloadPolicy, preloadManager);
       player.addListener(new Player.Listener() {
         @Override public void onPlaybackStateChanged(int state) { emitState(id, player); }
         @Override public void onIsPlayingChanged(boolean playing) {
@@ -397,8 +400,8 @@ public final class HlsCachePlayerPlugin
       return new QueueEntry(item, url, rankingIndex);
     }
 
-    synchronized void insert(String mediaId, String url, Integer requestedIndex) {
-      PlayerSlot slot = onlySlot();
+    synchronized void insert(int playerId, String mediaId, String url, Integer requestedIndex) {
+      PlayerSlot slot = playerSlot(playerId);
       int existingIndex = indexOf(slot, mediaId);
       if (existingIndex >= 0) {
         if (url.equals(slot.queue.get(existingIndex).url)) return;
@@ -410,12 +413,12 @@ public final class HlsCachePlayerPlugin
       }
       QueueEntry entry = queueEntry(mediaId, url, index);
       slot.queue.add(index, entry);
-      preloadManager.add(entry.mediaItem, entry.rankingIndex);
-      preloadManager.invalidate();
+      slot.preloadManager.add(entry.mediaItem, entry.rankingIndex);
+      slot.preloadManager.invalidate();
     }
 
-    synchronized void insertAll(List<Map<String, String>> items, Integer requestedIndex) {
-      PlayerSlot slot = onlySlot();
+    synchronized void insertAll(int playerId, List<Map<String, String>> items, Integer requestedIndex) {
+      PlayerSlot slot = playerSlot(playerId);
       int index = requestedIndex == null ? slot.queue.size() : requestedIndex;
       if (index < 0 || index > slot.queue.size()) {
         throw new IndexOutOfBoundsException("index " + index);
@@ -440,13 +443,13 @@ public final class HlsCachePlayerPlugin
       for (Map<String, String> item : newItems) {
         QueueEntry entry = queueEntry(item.get("mediaId"), item.get("url"), index);
         slot.queue.add(index++, entry);
-        preloadManager.add(entry.mediaItem, entry.rankingIndex);
+        slot.preloadManager.add(entry.mediaItem, entry.rankingIndex);
       }
-      preloadManager.invalidate();
+      slot.preloadManager.invalidate();
     }
 
-    synchronized void remove(String mediaId) {
-      PlayerSlot slot = onlySlot();
+    synchronized void remove(int playerId, String mediaId) {
+      PlayerSlot slot = playerSlot(playerId);
       int index = indexOf(slot, mediaId);
       if (index < 0) throw new IllegalArgumentException("Unknown mediaId " + mediaId);
       MediaItem current = slot.player.getCurrentMediaItem();
@@ -454,12 +457,12 @@ public final class HlsCachePlayerPlugin
         throw new IllegalStateException("Cannot remove the currently playing mediaId " + mediaId);
       }
       QueueEntry entry = slot.queue.remove(index);
-      preloadManager.remove(entry.mediaItem);
-      preloadManager.invalidate();
+      slot.preloadManager.remove(entry.mediaItem);
+      slot.preloadManager.invalidate();
     }
 
-    synchronized void removeAll(List<String> mediaIds) {
-      PlayerSlot slot = onlySlot();
+    synchronized void removeAll(int playerId, List<String> mediaIds) {
+      PlayerSlot slot = playerSlot(playerId);
       List<Integer> indices = new ArrayList<>();
       for (String mediaId : mediaIds) {
         int index = indexOf(slot, mediaId);
@@ -477,19 +480,19 @@ public final class HlsCachePlayerPlugin
       }
       for (int index : indices) {
         QueueEntry entry = slot.queue.remove(index);
-        preloadManager.remove(entry.mediaItem);
+        slot.preloadManager.remove(entry.mediaItem);
       }
-      preloadManager.invalidate();
+      slot.preloadManager.invalidate();
     }
 
-    synchronized void playMedia(String mediaId, long positionMs) {
-      PlayerSlot slot = onlySlot();
+    synchronized void playMedia(int playerId, String mediaId, long positionMs) {
+      PlayerSlot slot = playerSlot(playerId);
       int index = indexOf(slot, mediaId);
       if (index < 0) throw new IllegalArgumentException("Unknown mediaId " + mediaId);
       QueueEntry entry = slot.queue.get(index);
-      preloadPolicy.currentIndex = entry.rankingIndex;
-      preloadManager.setCurrentPlayingIndex(entry.rankingIndex);
-      MediaSource source = preloadManager.getMediaSource(entry.mediaItem);
+      slot.preloadPolicy.currentIndex = entry.rankingIndex;
+      slot.preloadManager.setCurrentPlayingIndex(entry.rankingIndex);
+      MediaSource source = slot.preloadManager.getMediaSource(entry.mediaItem);
       if (source == null) source = hlsMediaSourceFactory.createMediaSource(entry.mediaItem);
       slot.player.setMediaSource(source);
       slot.player.seekTo(Math.max(0, positionMs));
@@ -497,9 +500,10 @@ public final class HlsCachePlayerPlugin
       slot.player.play();
     }
 
-    private PlayerSlot onlySlot() {
-      if (slots.isEmpty()) throw new IllegalStateException("createPlayer must be called first");
-      return slots.values().iterator().next();
+    private PlayerSlot playerSlot(int id) {
+      PlayerSlot slot = slots.get(id);
+      if (slot == null) throw new IllegalArgumentException("unknown playerId " + id);
+      return slot;
     }
 
     private int indexOf(PlayerSlot slot, String mediaId) {
@@ -590,8 +594,7 @@ public final class HlsCachePlayerPlugin
     private void discardSlot(PlayerSlot slot) {
       slots.remove(slot.id);
       slot.player.release();
-      for (QueueEntry entry : slot.queue) preloadManager.remove(entry.mediaItem);
-      preloadManager.invalidate();
+      slot.preloadManager.release();
       slot.surface.release();
       slot.texture.release();
     }
@@ -647,11 +650,11 @@ public final class HlsCachePlayerPlugin
       progressScheduled = false;
       for (PlayerSlot slot : slots.values()) {
         slot.player.release();
+        slot.preloadManager.release();
         slot.surface.release();
         slot.texture.release();
       }
       slots.clear();
-      preloadManager.release();
       workers.shutdownNow();
       if (disk != null) {
         try { disk.release(); } catch (Exception ignored) {}

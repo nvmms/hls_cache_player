@@ -2,8 +2,8 @@
 
 面向竖屏短视频流的 Flutter HLS 播放插件，支持 Android 和 iOS。
 
-- 一个长期存活的原生播放器
-- 一个固定的 Texture / Surface
+- 每次 createController 都创建独立原生播放器，播放器池由目标 App 管理
+- 每个播放器拥有独立的 Texture / Surface
 - 由目标 App 管理的动态媒体队列
 - HLS playlist、首片及后续分片的内存/磁盘缓存
 - Android Media3 `DefaultPreloadManager`
@@ -12,12 +12,12 @@
 ## 初始化与缓存
 
 ```dart
-await HlsCachePlayerPool.configure(
+await HlsCachePlayer.configure(
   memoryCacheBytes: 48 * 1024 * 1024,
   diskCacheBytes: 768 * 1024 * 1024,
 );
 
-final localUrl = await HlsCachePlayerPool.preload(
+final localUrl = await HlsCachePlayer.preload(
   const HlsVideoSource(
     cacheKey: 'video-1-v1',
     url: 'https://example.com/video-1/master.m3u8',
@@ -28,12 +28,12 @@ final localUrl = await HlsCachePlayerPool.preload(
 `preload()` 返回本进程的 loopback URL。队列只能插入这个本地地址，播放器
 通过本地代理读取已经缓存的数据，并按需请求尚未缓存的分片。
 
-## 单播放器队列
+## 独立播放器与队列
 
-播放器会话只创建一次：
+每次调用都返回新的 Controller 和原生播放器；复用及池策略由目标 App 管理：
 
 ```dart
-final controller = await HlsCachePlayerPool.createController();
+final controller = await HlsCachePlayer.createController();
 ```
 
 目标 App 决定何时插入、删除以及播放哪一项：
@@ -57,7 +57,7 @@ await controller.removeAll(['video-2', 'video-3']);
 `mediaId` 必须在当前队列中唯一。业务代码应使用稳定 `mediaId`，不要持久化
 数组索引；插入和删除会改变索引。
 
-Android 的业务队列会同步给 `DefaultPreloadManager`。当前项及相邻一项预加载
+Android 每个播放器的业务队列会同步给各自的 `DefaultPreloadManager`。当前项及相邻一项预加载
 3 秒 Sample。播放时使用预热管理器返回的同一份 MediaSource，因此已经解析的
 SampleQueue 可以直接交给播放器。视频切换不会销毁 Player、Surface 或 Texture。
 
@@ -94,7 +94,7 @@ await controller.release();
 这会释放播放器、Surface 和 Texture。应用不再使用缓存代理时可统一关闭：
 
 ```dart
-await HlsCachePlayerPool.dispose();
+await HlsCachePlayer.dispose();
 ```
 
 同步的 Flutter `State.dispose()` 中也可以调用 `controller.dispose()`；需要等待

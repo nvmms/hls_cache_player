@@ -4,4 +4,4 @@ export 'src/video_controller.dart';
 export 'src/hls_cache_proxy.dart';
 export 'src/video_models.dart';
 export 'src/video_player_view.dart';
-export 'src/video_pool.dart';
+export 'src/player_factory.dart';

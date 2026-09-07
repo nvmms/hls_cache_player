@@ -79,6 +79,7 @@ public final class HlsCachePlayerPlugin: NSObject, FlutterPlugin,
 
       case "insert":
         try engine.insert(
+          playerId(arguments),
           mediaId: requiredString(arguments["mediaId"]),
           url: try requiredURL(arguments["url"]),
           at: optionalInt(arguments["index"])
@@ -87,22 +88,24 @@ public final class HlsCachePlayerPlugin: NSObject, FlutterPlugin,
 
       case "insertAll":
         try engine.insertAll(
-          queueItems(arguments["items"]),
+          playerId(arguments),
+          items: queueItems(arguments["items"]),
           at: optionalInt(arguments["index"])
         )
         result(nil)
 
       case "remove":
-        try engine.remove(mediaId: requiredString(arguments["mediaId"]))
+        try engine.remove(playerId(arguments), mediaId: requiredString(arguments["mediaId"]))
         result(nil)
 
       case "removeAll":
-        try engine.removeAll(mediaIds: arguments["mediaIds"] as? [String] ?? [])
+        try engine.removeAll(playerId(arguments), mediaIds: arguments["mediaIds"] as? [String] ?? [])
         result(nil)
 
       case "playMedia":
         try engine.playMedia(
-          requiredString(arguments["mediaId"]),
+          playerId(arguments),
+          mediaId: requiredString(arguments["mediaId"]),
           positionMilliseconds: int64(arguments["positionMs"])
         )
         result(nil)

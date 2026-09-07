@@ -6,7 +6,7 @@ import 'native_bridge.dart';
 import 'hls_cache_proxy.dart';
 import 'video_models.dart';
 
-/// The process-wide native player and its application-managed media queue.
+/// An independently owned native player and its application-managed media queue.
 class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
   HlsPlayerController.internal(
     this.playerId,

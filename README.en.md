@@ -2,22 +2,22 @@
 
 A Flutter HLS plugin for vertical video feeds on Android and iOS.
 
-- One long-lived native player
-- One fixed Texture / Surface
+- A new independent native player per createController call; application-owned pooling
+- An independent Texture / Surface per player
 - A dynamic media queue managed by the target application
 - Memory and disk caching for HLS playlists and segments
 - Media3 `DefaultPreloadManager` on Android
-- One AVPlayer playback session on iOS
+- An independent AVPlayer session per controller on iOS
 
 ## Configure and preload
 
 ```dart
-await HlsCachePlayerPool.configure(
+await HlsCachePlayer.configure(
   memoryCacheBytes: 48 * 1024 * 1024,
   diskCacheBytes: 768 * 1024 * 1024,
 );
 
-final localUrl = await HlsCachePlayerPool.preload(
+final localUrl = await HlsCachePlayer.preload(
   const HlsVideoSource(
     cacheKey: 'video-1-v1',
     url: 'https://example.com/video-1/master.m3u8',
@@ -29,12 +29,12 @@ final localUrl = await HlsCachePlayerPool.preload(
 local URL so playback reads cached data through the proxy and fetches missing
 segments on demand.
 
-## Single-player queue
+## Independent players and queues
 
-Create the playback session once:
+Every call creates a new controller and native player. The application owns reuse and pooling:
 
 ```dart
-final controller = await HlsCachePlayerPool.createController();
+final controller = await HlsCachePlayer.createController();
 ```
 
 The target application decides when to insert, remove, and select entries:
@@ -59,7 +59,7 @@ await controller.removeAll(['video-2', 'video-3']);
 stable media IDs rather than indices because insertions and removals shift
 indices.
 
-On Android, the logical queue is registered with `DefaultPreloadManager`. The
+On Android, each player has its own queue and `DefaultPreloadManager`. The
 current item and its immediate neighbors preload three seconds of samples.
 Playback uses the same preloaded media source, so its prepared SampleQueue can
 be handed to the player. Switching does not destroy the Player, Surface, or
@@ -101,5 +101,5 @@ This releases the Player, Surface, and Texture. Shut down the cache proxy when
 the application no longer needs it:
 
 ```dart
-await HlsCachePlayerPool.dispose();
+await HlsCachePlayer.dispose();
 ```

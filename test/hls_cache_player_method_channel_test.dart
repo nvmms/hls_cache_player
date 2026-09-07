@@ -40,7 +40,7 @@ two.ts
   });
 
   tearDown(() async {
-    await HlsCachePlayerPool.dispose();
+    await HlsCachePlayer.dispose();
     await upstream.close(force: true);
     await cacheDirectory.delete(recursive: true);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -48,14 +48,14 @@ two.ts
   });
 
   test('controller forwards queue insertion and playback by mediaId', () async {
-    await HlsCachePlayerPool.configure();
-    final localUrl = await HlsCachePlayerPool.preload(
+    await HlsCachePlayer.configure();
+    final localUrl = await HlsCachePlayer.preload(
       HlsVideoSource(
         cacheKey: 'method-channel',
         url: 'http://${upstream.address.address}:${upstream.port}/video.m3u8',
       ),
     );
-    final controller = await HlsCachePlayerPool.createController();
+    final controller = await HlsCachePlayer.createController();
     final item = HlsQueueItem(mediaId: 'video-1', url: localUrl);
     await Future.wait([controller.insert(item), controller.insert(item)]);
     await controller.playMedia('video-1');
@@ -82,7 +82,7 @@ two.ts
     await controller.release();
   });
 
-  test('pool accepts an Android texture create response', () async {
+  test('factory accepts an Android texture create response', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
       calls.add(call);
@@ -93,10 +93,60 @@ two.ts
       return null;
     });
 
-    final controller = await HlsCachePlayerPool.createController();
+    final controller = await HlsCachePlayer.createController();
 
     expect(controller.playerId, 7);
     expect(controller.textureId, 11);
     await controller.release();
+  });
+  test('controllers route independent queues and release by playerId',
+      () async {
+    var nextId = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      if (call.method == 'createPlayer') {
+        final id = ++nextId;
+        return {'playerId': id, 'textureId': id + 100};
+      }
+      if (call.method == 'cacheDirectory') return cacheDirectory.path;
+      return null;
+    });
+    final a = await HlsCachePlayer.createController();
+    final b = await HlsCachePlayer.createController(looping: false);
+    expect(identical(a, b), isFalse);
+    expect(a.playerId, isNot(b.playerId));
+    expect(a.textureId, isNot(b.textureId));
+    expect(calls.where((c) => c.method == 'createPlayer'), hasLength(2));
+    for (final controller in [a, b]) {
+      final url = 'http://127.0.0.1/${controller.playerId}.m3u8';
+      await controller.insert(HlsQueueItem(mediaId: 'same-id', url: url));
+      await controller.playMedia('same-id');
+      await controller.insertAll([HlsQueueItem(mediaId: 'extra', url: url)]);
+      await controller.removeAll(['extra']);
+      await controller.remove('same-id');
+    }
+    for (final method in [
+      'insert',
+      'insertAll',
+      'playMedia',
+      'remove',
+      'removeAll'
+    ]) {
+      expect(
+          calls
+              .where((c) => c.method == method)
+              .map((c) => (c.arguments as Map)['playerId']),
+          [a.playerId, b.playerId]);
+    }
+    await a.release();
+    await b.play();
+    expect(calls.last.arguments, {'playerId': b.playerId});
+    await b.release();
+    expect(
+        calls
+            .where((c) => c.method == 'release')
+            .map((c) => (c.arguments as Map)['playerId']),
+        [a.playerId, b.playerId]);
   });
 }

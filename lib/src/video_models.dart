@@ -31,7 +31,7 @@ class HlsQueueItem {
   /// index because indices change after insertions and removals.
   final String mediaId;
 
-  /// Loopback URL returned by [HlsCachePlayerPool.preload].
+  /// Loopback URL returned by [HlsCachePlayer.preload].
   final String url;
 
   Map<String, Object> toMessage() => <String, Object>{

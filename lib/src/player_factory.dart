@@ -5,9 +5,9 @@ import 'hls_cache_proxy.dart';
 import 'video_controller.dart';
 import 'video_models.dart';
 
-/// Process-wide entry point for preloading and one native playback session.
-class HlsCachePlayerPool {
-  HlsCachePlayerPool._();
+/// Shared cache services and a factory for independently owned native players.
+class HlsCachePlayer {
+  HlsCachePlayer._();
 
   static bool _configured = false;
 
@@ -49,7 +49,7 @@ class HlsCachePlayerPool {
     return Future.wait(sources.map(preload));
   }
 
-  /// Creates the process-wide player and its fixed video output.
+  /// Creates a new native player and its own video output on every call.
   ///
   /// The target application owns queue policy through [HlsPlayerController].
   static Future<HlsPlayerController> createController({

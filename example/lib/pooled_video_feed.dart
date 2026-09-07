@@ -24,9 +24,9 @@ class _PooledPostListPageState extends State<PooledPostListPage> {
 
   Future<void> _prepare() async {
     try {
-      await HlsCachePlayerPool.configure();
-      final urls = await HlsCachePlayerPool.preloadAll(widget.videos);
-      final controller = await HlsCachePlayerPool.createController();
+      await HlsCachePlayer.configure();
+      final urls = await HlsCachePlayer.preloadAll(widget.videos);
+      final controller = await HlsCachePlayer.createController();
       await controller.insertAll([
         for (var i = 0; i < widget.videos.length; i++)
           HlsQueueItem(mediaId: widget.videos[i].cacheKey, url: urls[i]),
