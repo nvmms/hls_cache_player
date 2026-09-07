@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import 'native_bridge.dart';
+import 'player_factory.dart';
 import 'hls_cache_proxy.dart';
 import 'video_models.dart';
 
@@ -31,6 +32,7 @@ class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
   Duration _lastCacheProgress = Duration.zero;
   String? _lastMediaId;
   String? _requestedMediaId;
+  String? _directUrl;
 
   /// Complete snapshots. Read [value] when an immediate value is needed.
   Stream<VideoPlayerValue> get states => _stateController.stream;
@@ -44,6 +46,54 @@ class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
       _invoke('seekTo', {'positionMs': position.inMilliseconds});
   Future<void> setLooping(bool looping) =>
       _invoke('setLooping', {'looping': looping});
+
+  /// Loads one HTTP(S) HLS URL without inserting it into the queue.
+  /// Existing queue entries are preserved. Use a preload URL for cached playback.
+  Future<void> setUrl(
+    String url, {
+    bool autoPlay = false,
+    Duration position = Duration.zero,
+  }) async {
+    _assertUsable();
+    final uri = Uri.tryParse(url);
+    if (uri == null ||
+        !uri.hasAuthority ||
+        uri.host.isEmpty ||
+        (uri.scheme != 'http' && uri.scheme != 'https')) {
+      throw ArgumentError.value(url, 'url', 'Must be an HTTP(S) URL.');
+    }
+    _requestedMediaId = null;
+    _directUrl = url;
+    _lastMediaId = null;
+    _lastBufferSampleAt = null;
+    _lastCacheProgress = Duration.zero;
+    _setValue(VideoPlayerValue(playSpeed: value.playSpeed, isSwitching: true));
+    try {
+      await _invoke('setUrl', {
+        'url': url,
+        'autoPlay': autoPlay,
+        'positionMs': position.inMilliseconds,
+      });
+    } catch (_) {
+      if (!_disposed) _setValue(value.copyWith(isSwitching: false));
+      rethrow;
+    }
+  }
+
+  /// Loads a cached HLS source, including its request headers, without a queue.
+  Future<void> setSource(
+    HlsVideoSource source, {
+    bool autoPlay = false,
+    Duration position = Duration.zero,
+  }) async {
+    _assertUsable();
+    final url = await HlsCachePlayer.preload(source);
+    await setUrl(url, autoPlay: autoPlay, position: position);
+  }
+
+  /// Loads and immediately plays one HTTP(S) HLS URL.
+  Future<void> playUrl(String url, {Duration position = Duration.zero}) =>
+      setUrl(url, autoPlay: true, position: position);
 
   /// Inserts one item. Existing [HlsQueueItem.mediaId] values are rejected.
   Future<void> insert(HlsQueueItem item, {int? index}) async {
@@ -127,6 +177,7 @@ class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
       return;
     }
     _requestedMediaId = mediaId;
+    _directUrl = null;
     _setValue(value.copyWith(mediaId: mediaId, isSwitching: true));
     try {
       await _invoke('playMedia', {
@@ -186,7 +237,7 @@ class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
     if (_disposed) return;
     if (event['type'] == 'firstFrame') {
       final mediaId = event['mediaId']?.toString();
-      if (mediaId != null && value.mediaId == mediaId) {
+      if (value.mediaId == mediaId) {
         _setValue(value.copyWith(isSwitching: false));
       }
       return;
@@ -221,7 +272,7 @@ class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
       _lastBufferSampleAt = null;
       _lastCacheProgress = Duration.zero;
     }
-    final playbackUrl = mediaId == null ? null : _urlsByMediaId[mediaId];
+    final playbackUrl = mediaId == null ? _directUrl : _urlsByMediaId[mediaId];
     final proxyCacheProgress = playbackUrl == null
         ? null
         : HlsCacheProxy.instance.cacheProgressFor(playbackUrl);

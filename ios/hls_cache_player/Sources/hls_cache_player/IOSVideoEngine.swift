@@ -158,6 +158,20 @@ final class IOSVideoEngine {
     emitState(slot)
   }
 
+  func setUrl(_ id: Int, url: URL, autoPlay: Bool, positionMilliseconds: Int64) throws {
+    let slot = try playerSlot(id)
+    removeObservers(slot)
+    slot.player.pause()
+    slot.currentMediaId = nil
+    slot.wantsToPlay = autoPlay
+    let item = AVPlayerItem(asset: AVURLAsset(url: url))
+    slot.player.replaceCurrentItem(with: item)
+    installObservers(slot, item: item)
+    let time = CMTime(value: max(0, positionMilliseconds), timescale: 1000)
+    slot.player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+    if autoPlay { slot.player.playImmediately(atRate: slot.playSpeed) }
+  }
+
   func playMedia(_ id: Int, mediaId: String, positionMilliseconds: Int64) throws {
     let slot = try playerSlot(id)
     guard let entry = slot.queue.first(where: { $0.mediaId == mediaId }) else {
@@ -349,11 +363,11 @@ final class IOSVideoEngine {
   }
 
   private func emitFirstFrame(_ id: Int) {
-    guard let slot = slots[id], let mediaId = slot.currentMediaId else { return }
+    guard let slot = slots[id] else { return }
     emit([
       "playerId": id,
       "type": "firstFrame",
-      "mediaId": mediaId,
+      "mediaId": slot.currentMediaId ?? NSNull(),
     ])
   }
 

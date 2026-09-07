@@ -115,6 +115,11 @@ public final class HlsCachePlayerPlugin
           engine.removeAll(number(call, "playerId", -1).intValue(), stringList(call, "mediaIds"));
           result.success(null);
           break;
+        case "setUrl":
+          engine.setUrl(number(call, "playerId", -1).intValue(), required(call, "url"),
+              Boolean.TRUE.equals(call.argument("autoPlay")), number(call, "positionMs", 0).longValue());
+          result.success(null);
+          break;
         case "playMedia":
           engine.playMedia(number(call, "playerId", -1).intValue(), required(call, "mediaId"), number(call, "positionMs", 0).longValue());
           result.success(null);
@@ -243,6 +248,7 @@ public final class HlsCachePlayerPlugin
     final ExoPlayer player;
     final TextureRegistry.SurfaceTextureEntry texture;
     final Surface surface;
+    boolean playingQueue;
     final PreloadPolicy preloadPolicy;
     final DefaultPreloadManager preloadManager;
     final List<QueueEntry> queue = new ArrayList<>();
@@ -382,7 +388,7 @@ public final class HlsCachePlayerPlugin
         @Override public void onRenderedFirstFrame() {
           Map<String, Object> event = event(id, "firstFrame");
           MediaItem current = player.getCurrentMediaItem();
-          event.put("mediaId", current == null ? null : current.mediaId);
+          event.put("mediaId", current == null || !slot.playingQueue ? null : current.mediaId);
           emitter.emit(event);
         }
         @Override public void onPlayerError(PlaybackException error) {
@@ -453,7 +459,7 @@ public final class HlsCachePlayerPlugin
       int index = indexOf(slot, mediaId);
       if (index < 0) throw new IllegalArgumentException("Unknown mediaId " + mediaId);
       MediaItem current = slot.player.getCurrentMediaItem();
-      if (current != null && mediaId.equals(current.mediaId)) {
+      if (slot.playingQueue && current != null && mediaId.equals(current.mediaId)) {
         throw new IllegalStateException("Cannot remove the currently playing mediaId " + mediaId);
       }
       QueueEntry entry = slot.queue.remove(index);
@@ -473,7 +479,7 @@ public final class HlsCachePlayerPlugin
       for (int index : indices) {
         QueueEntry entry = slot.queue.get(index);
         MediaItem current = slot.player.getCurrentMediaItem();
-        if (current != null && entry.mediaItem.mediaId.equals(current.mediaId)) {
+        if (slot.playingQueue && current != null && entry.mediaItem.mediaId.equals(current.mediaId)) {
           throw new IllegalStateException(
               "Cannot remove the currently playing mediaId " + entry.mediaItem.mediaId);
         }
@@ -485,6 +491,17 @@ public final class HlsCachePlayerPlugin
       slot.preloadManager.invalidate();
     }
 
+    synchronized void setUrl(int playerId, String url, boolean autoPlay, long positionMs) {
+      PlayerSlot slot = playerSlot(playerId);
+      slot.playingQueue = false;
+      slot.player.pause();
+      MediaItem item = new MediaItem.Builder().setUri(url).build();
+      slot.player.setMediaSource(hlsMediaSourceFactory.createMediaSource(item));
+      slot.player.seekTo(Math.max(0, positionMs));
+      slot.player.prepare();
+      if (autoPlay) slot.player.play();
+    }
+
     synchronized void playMedia(int playerId, String mediaId, long positionMs) {
       PlayerSlot slot = playerSlot(playerId);
       int index = indexOf(slot, mediaId);
@@ -494,6 +511,7 @@ public final class HlsCachePlayerPlugin
       slot.preloadManager.setCurrentPlayingIndex(entry.rankingIndex);
       MediaSource source = slot.preloadManager.getMediaSource(entry.mediaItem);
       if (source == null) source = hlsMediaSourceFactory.createMediaSource(entry.mediaItem);
+      slot.playingQueue = true;
       slot.player.setMediaSource(source);
       slot.player.seekTo(Math.max(0, positionMs));
       slot.player.prepare();
@@ -534,8 +552,10 @@ public final class HlsCachePlayerPlugin
       event.put("videoWidth", player.getVideoSize().width);
       event.put("videoHeight", player.getVideoSize().height);
       MediaItem current = player.getCurrentMediaItem();
-      event.put("mediaId", current == null ? null : current.mediaId);
-      event.put("mediaIndex", current == null ? -1 : player.getCurrentMediaItemIndex());
+      PlayerSlot slot = slots.get(id);
+      boolean queued = slot != null && slot.playingQueue && current != null;
+      event.put("mediaId", queued ? current.mediaId : null);
+      event.put("mediaIndex", queued ? indexOf(slot, current.mediaId) : -1);
       return event;
     }
 

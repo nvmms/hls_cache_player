@@ -102,6 +102,15 @@ public final class HlsCachePlayerPlugin: NSObject, FlutterPlugin,
         try engine.removeAll(playerId(arguments), mediaIds: arguments["mediaIds"] as? [String] ?? [])
         result(nil)
 
+      case "setUrl":
+        try engine.setUrl(
+          playerId(arguments),
+          url: try requiredURL(arguments["url"]),
+          autoPlay: arguments["autoPlay"] as? Bool ?? false,
+          positionMilliseconds: int64(arguments["positionMs"])
+        )
+        result(nil)
+
       case "playMedia":
         try engine.playMedia(
           playerId(arguments),

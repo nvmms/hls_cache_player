@@ -29,6 +29,26 @@ final localUrl = await HlsCachePlayer.preload(
 local URL so playback reads cached data through the proxy and fetches missing
 segments on demand.
 
+## Ordinary playback
+
+Load an HLS URL without inserting queue entries:
+
+```dart
+final controller = await HlsCachePlayer.createController();
+await controller.setUrl('https://example.com/video.m3u8');
+await controller.play();
+// Or load and play immediately:
+await controller.playUrl('https://example.com/other.m3u8');
+```
+
+For caching and request headers, use `setSource(HlsVideoSource(...), autoPlay: true)`.
+It resolves the source through the cache proxy. Both `setUrl` and `setSource`
+accept `autoPlay` (default false) and an initial `position` (default zero).
+`setUrl` accepts HTTP(S) HLS URLs, including local preload URLs; remote URLs
+bypass the plugin cache proxy. Ordinary playback preserves the queue; call
+`playMedia` to return to it. Its state has `mediaId: null` and `mediaIndex: -1`.
+Pause, seek, playback speed, and release work in both modes.
+
 ## Independent players and queues
 
 Every call creates a new controller and native player. The application owns reuse and pooling:

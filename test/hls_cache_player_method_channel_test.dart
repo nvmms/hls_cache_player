@@ -149,4 +149,64 @@ two.ts
             .map((c) => (c.arguments as Map)['playerId']),
         [a.playerId, b.playerId]);
   });
+  test('ordinary playback does not insert and can switch back to a queue',
+      () async {
+    final controller = await HlsCachePlayer.createController();
+    await controller.setUrl('https://example.com/direct.m3u8',
+        position: const Duration(seconds: 2));
+    final load = calls.last;
+    expect(load.method, 'setUrl');
+    expect(load.arguments, {
+      'playerId': controller.playerId,
+      'url': 'https://example.com/direct.m3u8',
+      'autoPlay': false,
+      'positionMs': 2000,
+    });
+    expect(calls.where((c) => c.method == 'insert'), isEmpty);
+    expect(controller.value.mediaId, isNull);
+    expect(controller.value.mediaIndex, -1);
+    await controller.play();
+    expect(calls.last.method, 'play');
+    await controller.insert(const HlsQueueItem(
+        mediaId: 'queued', url: 'http://127.0.0.1/queued.m3u8'));
+    await controller.playMedia('queued');
+    await controller.playUrl('https://example.com/other.m3u8');
+    expect(calls.last.method, 'setUrl');
+    expect((calls.last.arguments as Map)['autoPlay'], isTrue);
+    await controller.playMedia('queued');
+    expect(calls.last.method, 'playMedia');
+    expect((calls.last.arguments as Map)['mediaId'], 'queued');
+    await controller.release();
+  });
+
+  test('setSource resolves a cached URL without inserting a queue item',
+      () async {
+    final controller = await HlsCachePlayer.createController();
+    await controller.setSource(
+        HlsVideoSource(
+          cacheKey: 'ordinary',
+          url: 'http://${upstream.address.address}:${upstream.port}/video.m3u8',
+        ),
+        autoPlay: true);
+    expect(calls.last.method, 'setUrl');
+    expect(
+        (calls.last.arguments as Map)['url'], startsWith('http://127.0.0.1:'));
+    expect((calls.last.arguments as Map)['autoPlay'], isTrue);
+    expect(calls.where((c) => c.method == 'insert' || c.method == 'insertAll'),
+        isEmpty);
+    await controller.release();
+  });
+
+  test('ordinary playback rejects invalid URLs before invoking native code',
+      () async {
+    final controller = await HlsCachePlayer.createController();
+    final count = calls.length;
+    for (final url in ['', 'relative.m3u8', 'file:///tmp/video.m3u8']) {
+      await expectLater(controller.setUrl(url), throwsArgumentError);
+    }
+    expect(calls, hasLength(count));
+    await controller.release();
+    await expectLater(
+        controller.playUrl('https://example.com/video.m3u8'), throwsStateError);
+  });
 }

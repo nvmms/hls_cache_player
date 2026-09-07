@@ -28,6 +28,37 @@ final localUrl = await HlsCachePlayer.preload(
 `preload()` 返回本进程的 loopback URL。队列只能插入这个本地地址，播放器
 通过本地代理读取已经缓存的数据，并按需请求尚未缓存的分片。
 
+## 普通播放
+
+无需创建队列项，直接设置 HLS 地址后播放：
+
+```dart
+final controller = await HlsCachePlayer.createController();
+await controller.setUrl('https://example.com/video.m3u8');
+await controller.play();
+// 或设置地址并立即播放：
+await controller.playUrl('https://example.com/other.m3u8');
+```
+
+需要缓存和请求头时，使用 `setSource()`，它会通过缓存代理加载资源：
+
+```dart
+await controller.setSource(
+  const HlsVideoSource(
+    cacheKey: 'video-1-v1',
+    url: 'https://example.com/video.m3u8',
+    headers: {'Authorization': 'Bearer token'},
+  ),
+  autoPlay: true,
+  position: Duration(seconds: 5),
+);
+```
+
+`setUrl()` 和 `setSource()` 默认不自动播放，支持 `autoPlay` 和起始 `position`。
+`setUrl()` 可接受远程 HTTP(S) 地址或 `preload()` 返回的本地地址；直接传远程地址
+不经过插件缓存代理。普通播放不会修改已有队列，可用 `playMedia()` 切回队列。
+普通播放状态的 `mediaId` 为 `null`、`mediaIndex` 为 `-1`。暂停、拖动、倍速及释放接口通用。
+
 ## 独立播放器与队列
 
 每次调用都返回新的 Controller 和原生播放器；复用及池策略由目标 App 管理：
