@@ -88,4 +88,37 @@ two.ts
     expect(controller.textureId, 11);
     await controller.release();
   });
+
+  test('releasing and reacquiring players preserves a shared proxy URL',
+      () async {
+    final origin = 'http://${upstream.address.address}:${upstream.port}';
+    final sharedUrl = await HlsCachePlayerPool.preload(HlsVideoSource(
+      cacheKey: 'shared-tab-video',
+      url: '$origin/video.m3u8',
+    ));
+    final tab1 = await HlsCachePlayerPool.acquire(sharedUrl);
+    final tab2 = await HlsCachePlayerPool.acquire(sharedUrl);
+    await tab1.release();
+    await tab2.release();
+    for (var index = 0; index < 8; index++) {
+      final url = await HlsCachePlayerPool.preload(HlsVideoSource(
+        cacheKey: 'scrolled-video-$index',
+        url: '$origin/video.m3u8',
+      ));
+      final player = await HlsCachePlayerPool.acquire(url);
+      await player.release();
+    }
+    final returningTab = await HlsCachePlayerPool.acquire(sharedUrl);
+    final client = HttpClient();
+    try {
+      final response =
+          await (await client.getUrl(Uri.parse(sharedUrl))).close();
+      expect(response.statusCode, HttpStatus.ok);
+      await response.drain<void>();
+      expect(calls.where((call) => call.method == 'dispose'), isEmpty);
+    } finally {
+      client.close(force: true);
+      await returningTab.release();
+    }
+  });
 }

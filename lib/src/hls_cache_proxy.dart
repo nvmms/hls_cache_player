@@ -123,15 +123,17 @@ final class HlsCacheProxy {
     try {
       final parts = request.uri.pathSegments;
       if (parts.length != 4 || parts[0] != 'v1') {
-        request.response.statusCode = HttpStatus.notFound;
-        await request.response.close();
+        await _routeNotFound(request, 'invalid_path');
         return;
       }
       final source = _sources[parts[1]];
       final upstream = source?.routes[parts[2]];
       if (source == null || upstream == null) {
-        request.response.statusCode = HttpStatus.notFound;
-        await request.response.close();
+        await _routeNotFound(
+          request,
+          source == null ? 'source_not_registered' : 'resource_not_registered',
+          routeCount: source?.routes.length,
+        );
         return;
       }
       final original = await _load(source, upstream);
@@ -178,6 +180,22 @@ final class HlsCacheProxy {
       request.response.write(message);
       await request.response.close();
     }
+  }
+
+  Future<void> _routeNotFound(
+    HttpRequest request,
+    String reason, {
+    int? routeCount,
+  }) async {
+    final message = 'HLS proxy 404: $reason; '
+        'request=${request.method} ${request.uri}; '
+        'port=${request.connectionInfo?.localPort}; '
+        'sources=${_sources.length}; routes=${routeCount ?? 0}';
+    developer.log(message, name: 'hls_cache_player', level: 1000);
+    request.response.statusCode = HttpStatus.notFound;
+    request.response.headers.contentType = ContentType.text;
+    if (request.method != 'HEAD') request.response.write(message);
+    await request.response.close();
   }
 
   Future<Uint8List> _load(

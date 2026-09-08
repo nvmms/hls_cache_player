@@ -386,7 +386,10 @@ public final class HlsCachePlayerPlugin
           message.append(": ").append(current.getMessage());
         }
         if (current instanceof HttpDataSource.InvalidResponseCodeException) {
-          byte[] body = ((HttpDataSource.InvalidResponseCodeException) current).responseBody;
+          HttpDataSource.InvalidResponseCodeException responseError =
+              (HttpDataSource.InvalidResponseCodeException) current;
+          message.append("; request uri: ").append(responseError.dataSpec.uri);
+          byte[] body = responseError.responseBody;
           if (body.length > 0) {
             message.append("; response body: ")
                 .append(new String(body, StandardCharsets.UTF_8));

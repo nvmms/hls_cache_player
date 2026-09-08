@@ -161,6 +161,78 @@ seg2.ts?auth_key=second
     await _read(client, Uri.parse(lines[1]));
     client.close(force: true);
   });
+
+  test('an inactive tab can reuse its URLs after other videos are loaded',
+      () async {
+    final proxy = HlsCacheProxy.instance;
+    final origin = 'http://${upstream.address.address}:${upstream.port}';
+    final client = HttpClient();
+    // Retain the playlist and segment URL as an inactive player would.
+    final oldUrl = await proxy.preload(HlsVideoSource(
+      cacheKey: 'shared-video',
+      url: '$origin/video.m3u8?auth_key=old',
+    ));
+    try {
+      final oldPlaylist = utf8.decode(await _read(client, Uri.parse(oldUrl)));
+      final oldSegment = const LineSplitter().convert(oldPlaylist).firstWhere(
+            (line) => line.isNotEmpty && !line.startsWith('#'),
+          );
+      await proxy.configure(
+          memoryCacheBytes: 0, diskCacheBytes: 768 * 1024 * 1024);
+      for (var index = 0; index < 12; index++) {
+        await proxy.preload(HlsVideoSource(
+          cacheKey: 'video-$index',
+          url: '$origin/video.m3u8?auth_key=$index',
+        ));
+      }
+      await proxy.preload(HlsVideoSource(
+        cacheKey: 'shared-video',
+        url: '$origin/video.m3u8?auth_key=new',
+      ));
+      // Force a cache miss as well: routes must outlive the cached bytes.
+      final files =
+          await Directory('${cacheDirectory.path}/hls_cache_player_proxy')
+              .list()
+              .where((entry) => entry is File)
+              .toList();
+      for (final file in files) {
+        await file.delete();
+      }
+      expect(utf8.decode(await _read(client, Uri.parse(oldUrl))),
+          startsWith('#EXTM3U'));
+      expect(await _read(client, Uri.parse(oldSegment)), hasLength(32));
+    } finally {
+      client.close(force: true);
+      await proxy.configure(
+          memoryCacheBytes: 48 * 1024 * 1024,
+          diskCacheBytes: 768 * 1024 * 1024);
+    }
+  });
+
+  test('404 response identifies the missing route', () async {
+    final origin = 'http://${upstream.address.address}:${upstream.port}';
+    final url = Uri.parse(await HlsCacheProxy.instance.preload(HlsVideoSource(
+      cacheKey: 'diagnostics',
+      url: '$origin/video.m3u8',
+    )));
+    final client = HttpClient();
+    try {
+      for (final entry in {
+        '/invalid': 'invalid_path',
+        '/v1/missing/resource/video.m3u8': 'source_not_registered',
+        '/v1/${url.pathSegments[1]}/missing/video.m3u8':
+            'resource_not_registered',
+      }.entries) {
+        final response =
+            await (await client.getUrl(url.replace(path: entry.key))).close();
+        expect(response.statusCode, HttpStatus.notFound);
+        expect(await response.transform(utf8.decoder).join(),
+            contains(entry.value));
+      }
+    } finally {
+      client.close(force: true);
+    }
+  });
 }
 
 Future<List<int>> _read(HttpClient client, Uri uri) async {
