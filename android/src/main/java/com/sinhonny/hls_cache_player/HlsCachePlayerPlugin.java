@@ -48,7 +48,7 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 
-/** Native Media3 implementation and bounded player/cache pools. */
+/** Native Media3 implementation with one reusable player and texture. */
 @UnstableApi
 public final class HlsCachePlayerPlugin
     implements FlutterPlugin, MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
@@ -97,6 +97,29 @@ public final class HlsCachePlayerPlugin
           acquired.put("playerId", playerId);
           acquired.put("textureId", engine.textureId(playerId));
           result.success(acquired);
+          break;
+        case "createPlayer":
+          int createdId = engine.createPlayer();
+          Map<String, Object> created = new LinkedHashMap<>();
+          created.put("playerId", createdId);
+          created.put("textureId", engine.textureId(createdId));
+          result.success(created);
+          break;
+        case "addSource":
+          engine.addSource(number(call, "playerId", -1).intValue(),
+              required(call, "mediaId"), required(call, "url"));
+          result.success(null);
+          break;
+        case "moveTo":
+          engine.moveTo(number(call, "playerId", -1).intValue(),
+              number(call, "index", 0).intValue());
+          result.success(null);
+          break;
+        case "changeSource":
+          engine.changeSource(number(call, "playerId", -1).intValue(),
+              required(call, "mediaId"), required(call, "url"),
+              Boolean.TRUE.equals(call.argument("autoPlay")));
+          result.success(null);
           break;
         case "play":
           engine.player(number(call, "playerId", -1).intValue()).play();
@@ -283,6 +306,45 @@ public final class HlsCachePlayerPlugin
       return slot.id;
     }
 
+    synchronized int createPlayer() {
+      if (!slots.isEmpty()) return slots.values().iterator().next().id;
+      PlayerSlot slot = createSlot();
+      slot.leases = 1;
+      return slot.id;
+    }
+
+    private HlsMediaSource source(String mediaId, String url) {
+      DataSource.Factory localProxy = new DefaultDataSource.Factory(context);
+      MediaItem item = new MediaItem.Builder().setMediaId(mediaId).setUri(url).build();
+      return new HlsMediaSource.Factory(localProxy).createMediaSource(item);
+    }
+
+    synchronized void addSource(int id, String mediaId, String url) {
+      PlayerSlot slot = slots.get(id);
+      if (slot == null) throw new IllegalArgumentException("unknown playerId " + id);
+      slot.player.addMediaSource(source(mediaId, url));
+      slot.player.prepare();
+    }
+
+    synchronized void moveTo(int id, int index) {
+      PlayerSlot slot = slots.get(id);
+      if (slot == null) throw new IllegalArgumentException("unknown playerId " + id);
+      if (index < 0 || index >= slot.player.getMediaItemCount()) {
+        throw new IndexOutOfBoundsException("playlist index " + index);
+      }
+      slot.player.seekToDefaultPosition(index);
+      slot.player.prepare();
+    }
+
+    synchronized void changeSource(
+        int id, String mediaId, String url, boolean autoPlay) {
+      PlayerSlot slot = slots.get(id);
+      if (slot == null) throw new IllegalArgumentException("unknown playerId " + id);
+      slot.player.setMediaSource(source(mediaId, url), true);
+      slot.player.prepare();
+      if (autoPlay) slot.player.play(); else slot.player.pause();
+    }
+
     private PlayerSlot obtainSlot() {
       if (slots.size() < maxPlayers) return createSlot();
       PlayerSlot oldest = null;
@@ -354,6 +416,8 @@ public final class HlsCachePlayerPlugin
       event.put("playSpeed", player.getPlaybackParameters().speed);
       event.put("videoWidth", player.getVideoSize().width);
       event.put("videoHeight", player.getVideoSize().height);
+      MediaItem current = player.getCurrentMediaItem();
+      event.put("mediaId", current == null ? "" : current.mediaId);
       return event;
     }
 

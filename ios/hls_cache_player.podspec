@@ -5,9 +5,9 @@
 Pod::Spec.new do |s|
   s.name             = 'hls_cache_player'
   s.version          = '0.0.1'
-  s.summary          = 'A pooled HLS player backed by a local cache proxy.'
+  s.summary          = 'A reusable HLS playlist player backed by a local cache proxy.'
   s.description      = <<-DESC
-An Android and iOS HLS cache proxy and reusable native player pool.
+An Android and iOS HLS cache proxy and reusable single native player.
                        DESC
   s.homepage         = 'https://github.com/nvmms/hls_cache_player'
   s.license          = { :file => '../LICENSE' }

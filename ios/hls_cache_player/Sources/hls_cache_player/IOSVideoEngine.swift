@@ -12,7 +12,6 @@ struct IOSVideoSource {
 enum IOSVideoError: LocalizedError {
   case invalidSource
   case unknownPlayer(Int)
-  case poolExhausted
   case invalidResponse(URL)
 
   var errorDescription: String? {
@@ -21,8 +20,6 @@ enum IOSVideoError: LocalizedError {
       return "cacheKey and a valid absolute url are required."
     case .unknownPlayer(let id):
       return "Unknown playerId \(id)."
-    case .poolExhausted:
-      return "All player pool entries are leased."
     case .invalidResponse(let url):
       return "The server returned an invalid response for \(url.absoluteString)."
     }
@@ -38,6 +35,8 @@ private final class IOSPlayerSlot {
   var looping = false
   var wantsToPlay = false
   var playSpeed: Float = 1.0
+  var playList: [(mediaId: String, url: URL)] = []
+  var currentIndex = 0
   var resourceLoader: IOSHLSResourceLoader?
   var timeControlObservation: NSKeyValueObservation?
   var itemStatusObservation: NSKeyValueObservation?
@@ -125,6 +124,62 @@ final class IOSVideoEngine {
 
     if autoPlay { slot.player.playImmediately(atRate: slot.playSpeed) }
     return slot.id
+  }
+
+  func createPlayer() throws -> [String: Any] {
+    precondition(Thread.isMainThread)
+    let slot: IOSPlayerSlot
+    if let existing = slots.values.first {
+      slot = existing
+    } else {
+      slot = IOSPlayerSlot(id: nextPlayerId)
+      nextPlayerId += 1
+      slots[slot.id] = slot
+    }
+    slot.leases = 1
+    return ["playerId": slot.id]
+  }
+
+  func addSource(_ id: Int, mediaId: String, url: URL) throws {
+    guard !mediaId.isEmpty else { throw IOSVideoError.invalidSource }
+    let slot = try playerSlot(id)
+    slot.playList.append((mediaId, url))
+    if slot.player.currentItem == nil {
+      slot.currentIndex = 0
+      replaceItem(slot, url: url)
+    }
+  }
+
+  func moveTo(_ id: Int, index: Int) throws {
+    let slot = try playerSlot(id)
+    guard slot.playList.indices.contains(index) else {
+      throw IOSVideoError.invalidSource
+    }
+    let wasPlaying = slot.wantsToPlay
+    slot.currentIndex = index
+    replaceItem(slot, url: slot.playList[index].url)
+    if wasPlaying { slot.player.playImmediately(atRate: slot.playSpeed) }
+  }
+
+  func changeSource(
+    _ id: Int,
+    mediaId: String,
+    url: URL,
+    autoPlay: Bool
+  ) throws {
+    guard !mediaId.isEmpty else { throw IOSVideoError.invalidSource }
+    let slot = try playerSlot(id)
+    slot.playList = [(mediaId, url)]
+    slot.currentIndex = 0
+    slot.wantsToPlay = autoPlay
+    replaceItem(slot, url: url)
+    if autoPlay { slot.player.playImmediately(atRate: slot.playSpeed) }
+  }
+
+  private func replaceItem(_ slot: IOSPlayerSlot, url: URL) {
+    let item = AVPlayerItem(asset: AVURLAsset(url: url))
+    slot.player.replaceCurrentItem(with: item)
+    installObservers(slot, item: item)
   }
 
   func play(_ id: Int) throws {
@@ -242,7 +297,7 @@ final class IOSVideoEngine {
       .filter({ $0.leases == 0 })
       .min(by: { $0.lastUsed < $1.lastUsed })
     else {
-      // maxPlayers controls the warm players retained by the pool. A Flutter
+      // Legacy acquire compatibility may transiently mount more players. A Flutter
       // scrollable may transiently mount more children than that, so create an
       // overflow player instead of failing the visible video's acquire. The
       // overflow is discarded when its final lease is released.
@@ -370,6 +425,8 @@ final class IOSVideoEngine {
       "playerStatus": slot.player.status.rawValue,
       "timeControlStatus": slot.player.timeControlStatus.rawValue,
       "waitingReason": slot.player.reasonForWaitingToPlay?.rawValue ?? "",
+      "mediaId": slot.playList.indices.contains(slot.currentIndex)
+        ? slot.playList[slot.currentIndex].mediaId : "",
     ]
   }
 

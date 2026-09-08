@@ -93,6 +93,33 @@ public final class HlsCachePlayerPlugin: NSObject, FlutterPlugin,
         )
         result(playerId)
 
+      case "createPlayer":
+        result(try engine.createPlayer())
+
+      case "addSource":
+        try engine.addSource(
+          playerId(arguments),
+          mediaId: arguments["mediaId"] as? String ?? "",
+          url: try requiredURL(arguments)
+        )
+        result(nil)
+
+      case "moveTo":
+        try engine.moveTo(
+          playerId(arguments),
+          index: int(arguments["index"])
+        )
+        result(nil)
+
+      case "changeSource":
+        try engine.changeSource(
+          playerId(arguments),
+          mediaId: arguments["mediaId"] as? String ?? "",
+          url: try requiredURL(arguments),
+          autoPlay: arguments["autoPlay"] as? Bool ?? false
+        )
+        result(nil)
+
       case "play":
         try engine.play(playerId(arguments))
         result(nil)
@@ -180,6 +207,12 @@ public final class HlsCachePlayerPlugin: NSObject, FlutterPlugin,
 
   private func playerId(_ arguments: [String: Any]) -> Int {
     int(arguments["playerId"], fallback: -1)
+  }
+
+  private func requiredURL(_ arguments: [String: Any]) throws -> URL {
+    guard let value = arguments["url"] as? String, let url = URL(string: value)
+    else { throw IOSVideoError.invalidSource }
+    return url
   }
 
   private func int(_ value: Any?, fallback: Int = 0) -> Int {

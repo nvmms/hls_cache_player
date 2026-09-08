@@ -14,8 +14,8 @@ import 'package:hls_cache_player/hls_cache_player.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('configures the native player pool', (tester) async {
-    await HlsCachePlayerPool.configure(maxPlayers: 1);
-    await HlsCachePlayerPool.dispose();
+  testWidgets('creates the native player', (tester) async {
+    await HlsCachePlayer.create();
+    await HlsCachePlayer.dispose();
   });
 }

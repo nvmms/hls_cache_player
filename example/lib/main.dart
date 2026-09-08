@@ -57,7 +57,7 @@ class ExampleApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark(),
-      home: PooledPostListPage(videos: videos),
+      home: PlaylistPlayerPage(videos: videos),
     );
   }
 }

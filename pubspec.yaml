@@ -1,5 +1,5 @@
 name: hls_cache_player
-description: "A cross-platform HLS cache proxy, player pool, and Flutter video view."
+description: "A cross-platform reusable HLS player, playlist, cache proxy, and Flutter video view."
 version: 0.0.1
 homepage: https://github.com/nvmms/hls_cache_player
 
