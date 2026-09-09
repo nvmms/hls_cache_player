@@ -17,7 +17,24 @@ import 'video_models.dart';
 final class HlsCacheProxy {
   HlsCacheProxy._();
 
-  static final HlsCacheProxy instance = HlsCacheProxy._();
+  static final HlsCacheProxy _instance = HlsCacheProxy._();
+
+  static Future<void> configure({
+    required int memoryCacheBytes,
+    required int diskCacheBytes,
+  }) =>
+      _instance._configure(
+        memoryCacheBytes: memoryCacheBytes,
+        diskCacheBytes: diskCacheBytes,
+      );
+
+  static Future<String> preload(HlsVideoSource source) =>
+      _instance._preload(source);
+
+  static Future<List<String>> preloadAll(Iterable<HlsVideoSource> sources) =>
+      Future.wait(sources.map(preload));
+
+  static Future<void> dispose() => _instance._dispose();
 
   final HttpClient _client = HttpClient();
   final Map<String, _RegisteredSource> _sources = {};
@@ -30,7 +47,7 @@ final class HlsCacheProxy {
   int _diskBytes = 768 * 1024 * 1024;
   int _memoryUsed = 0;
 
-  Future<void> configure({
+  Future<void> _configure({
     required int memoryCacheBytes,
     required int diskCacheBytes,
   }) async {
@@ -43,7 +60,7 @@ final class HlsCacheProxy {
   /// Caches the entry/media playlists and the first playable resources.
   /// Returns a loopback HLS URL whose resource identity is namespaced by the
   /// caller-provided [HlsVideoSource.cacheKey].
-  Future<String> preload(HlsVideoSource source) async {
+  Future<String> _preload(HlsVideoSource source) async {
     await _ensureStarted();
     final token = sha256.convert(utf8.encode(source.cacheKey)).toString();
     // Keep routes alive for concurrent preloads and already-issued player URLs.
@@ -65,12 +82,12 @@ final class HlsCacheProxy {
     final startup = _startupResources(mediaText, mediaUri);
     await Future.wait(startup.map((uri) => _load(registered, uri)));
 
-    final localUri = _proxyUri(registered, entry);
+    final localUri = _entryProxyUri(registered, entry);
     await _verifyLocalUri(localUri);
     return localUri.toString();
   }
 
-  Future<void> dispose() async {
+  Future<void> _dispose() async {
     await _starting;
     await _server?.close(force: true);
     _server = null;
@@ -282,9 +299,10 @@ final class HlsCacheProxy {
 
   Uri _proxyUri(_RegisteredSource source, Uri upstream) {
     final resourceToken = sha256
-        .convert(utf8.encode(upstream.toString()))
+        .convert(utf8.encode(_resourceIdentity(upstream)))
         .toString()
         .substring(0, 24);
+    // A refreshed signed URL updates the existing stable local route.
     source.routes[resourceToken] = upstream;
     return Uri(
       scheme: 'http',
@@ -295,6 +313,25 @@ final class HlsCacheProxy {
         source.token,
         resourceToken,
         upstream.pathSegments.lastOrNull ?? 'resource',
+      ],
+    );
+  }
+
+  Uri _entryProxyUri(_RegisteredSource source, Uri upstream) {
+    // The public playback URL represents the logical media, not the current
+    // signed upstream URL. Refreshing a source with the same cacheKey updates
+    // this route in place so callers keep receiving the same local URL.
+    const resourceToken = 'entry';
+    source.routes[resourceToken] = upstream;
+    return Uri(
+      scheme: 'http',
+      host: InternetAddress.loopbackIPv4.address,
+      port: _server!.port,
+      pathSegments: [
+        'v1',
+        source.token,
+        resourceToken,
+        'index.m3u8',
       ],
     );
   }
@@ -321,10 +358,12 @@ final class HlsCacheProxy {
   String _resourceKey(String namespace, Uri uri) {
     // Signed query parameters deliberately do not participate in identity.
     // The caller changes cacheKey when bytes behind a stable resource change.
-    final identity =
-        '${uri.scheme}://${uri.host}:${uri.hasPort ? uri.port : 0}${uri.path}';
+    final identity = _resourceIdentity(uri);
     return sha256.convert(utf8.encode('$namespace\n$identity')).toString();
   }
+
+  String _resourceIdentity(Uri uri) =>
+      '${uri.scheme}://${uri.host}:${uri.hasPort ? uri.port : 0}${uri.path}';
 
   Uri? _firstVariant(String playlist, Uri base) {
     final lines = const LineSplitter().convert(playlist);

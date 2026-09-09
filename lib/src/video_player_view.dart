@@ -20,26 +20,35 @@ class HlsPlayerView extends StatelessWidget {
       'playerId': controller.playerId,
       'fit': fit.name,
     };
-    return switch (defaultTargetPlatform) {
-      TargetPlatform.android => _AndroidTexturePlayer(
-          controller: controller,
-          fit: fit,
-        ),
-      TargetPlatform.iOS => UiKitView(
-          viewType: 'hls_cache_player/view',
-          creationParams: creationParams,
-          creationParamsCodec: const StandardMessageCodec(),
-        ),
-      _ => const ColoredBox(
-          color: Colors.black,
-          child: Center(
-            child: Text(
-              'hls_cache_player supports Android and iOS.',
-              style: TextStyle(color: Colors.white),
+    return ValueListenableBuilder(
+      valueListenable: controller,
+      builder: (context, value, child) {
+        final player = switch (defaultTargetPlatform) {
+          TargetPlatform.android => _AndroidTexturePlayer(
+              controller: controller,
+              fit: fit,
             ),
-          ),
-        ),
-    };
+          TargetPlatform.iOS => UiKitView(
+              viewType: 'hls_cache_player/view',
+              creationParams: creationParams,
+              creationParamsCodec: const StandardMessageCodec(),
+            ),
+          _ => const ColoredBox(
+              color: Colors.black,
+              child: Center(
+                child: Text(
+                  'hls_cache_player supports Android and iOS.',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+            ),
+        };
+        return Opacity(
+          opacity: value.hasRenderedFirstFrame ? 1 : 0,
+          child: player,
+        );
+      },
+    );
   }
 }
 

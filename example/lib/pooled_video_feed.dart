@@ -23,12 +23,16 @@ class _PlaylistPlayerPageState extends State<PlaylistPlayerPage> {
 
   Future<void> _prepare() async {
     try {
+      final playbackUrls = await HlsCacheProxy.preloadAll(widget.videos);
       final player = await HlsCachePlayer.create();
-      for (final source in widget.videos) {
-        await player.addSource(source);
+      for (var index = 0; index < widget.videos.length; index++) {
+        await player.addSource(
+          mediaId: widget.videos[index].cacheKey,
+          playbackUrl: playbackUrls[index],
+        );
       }
       if (widget.videos.isNotEmpty) {
-        await player.play(widget.videos.first.cacheKey);
+        await player.play(mediaId: widget.videos.first.cacheKey);
       }
       if (mounted) setState(() => _player = player);
     } catch (error, stackTrace) {
@@ -41,7 +45,7 @@ class _PlaylistPlayerPageState extends State<PlaylistPlayerPage> {
   Future<void> _move(int index) async {
     final player = _player;
     if (player == null) return;
-    await player.moveTo(index);
+    await player.moveTo(widget.videos[index].cacheKey);
     await player.play();
     if (mounted) setState(() => _index = index);
   }

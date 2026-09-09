@@ -7,6 +7,7 @@ import android.os.Looper;
 import android.view.Surface;
 
 import androidx.annotation.NonNull;
+import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
@@ -110,6 +111,11 @@ public final class HlsCachePlayerPlugin
               required(call, "mediaId"), required(call, "url"));
           result.success(null);
           break;
+        case "updateSource":
+          engine.updateSource(number(call, "playerId", -1).intValue(),
+              required(call, "mediaId"), required(call, "url"));
+          result.success(null);
+          break;
         case "moveTo":
           engine.moveTo(number(call, "playerId", -1).intValue(),
               number(call, "index", 0).intValue());
@@ -122,7 +128,8 @@ public final class HlsCachePlayerPlugin
           result.success(null);
           break;
         case "play":
-          engine.player(number(call, "playerId", -1).intValue()).play();
+          engine.play(number(call, "playerId", -1).intValue(),
+              call.argument("mediaId"), Boolean.TRUE.equals(call.argument("force")));
           result.success(null);
           break;
         case "pause":
@@ -215,6 +222,7 @@ public final class HlsCachePlayerPlugin
     String cacheKey;
     int leases;
     long lastUsed;
+    boolean hasRenderedFirstFrame;
     PlayerSlot(
         int id,
         ExoPlayer player,
@@ -307,23 +315,84 @@ public final class HlsCachePlayerPlugin
     }
 
     synchronized int createPlayer() {
-      if (!slots.isEmpty()) return slots.values().iterator().next().id;
-      PlayerSlot slot = createSlot();
+      PlayerSlot slot = obtainSlot();
       slot.leases = 1;
       return slot.id;
     }
 
     private HlsMediaSource source(String mediaId, String url) {
       DataSource.Factory localProxy = new DefaultDataSource.Factory(context);
-      MediaItem item = new MediaItem.Builder().setMediaId(mediaId).setUri(url).build();
-      return new HlsMediaSource.Factory(localProxy).createMediaSource(item);
+      return new HlsMediaSource.Factory(localProxy).createMediaSource(mediaItem(mediaId, url));
+    }
+
+    private MediaItem mediaItem(String mediaId, String url) {
+      return new MediaItem.Builder().setMediaId(mediaId).setUri(url).build();
     }
 
     synchronized void addSource(int id, String mediaId, String url) {
       PlayerSlot slot = slots.get(id);
       if (slot == null) throw new IllegalArgumentException("unknown playerId " + id);
+      for (int index = 0; index < slot.player.getMediaItemCount(); index++) {
+        if (mediaId.equals(slot.player.getMediaItemAt(index).mediaId)) {
+          updateSource(id, mediaId, url);
+          return;
+        }
+      }
       slot.player.addMediaSource(source(mediaId, url));
-      slot.player.prepare();
+    }
+
+    synchronized void updateSource(int id, String mediaId, String url) {
+      PlayerSlot slot = slots.get(id);
+      if (slot == null) throw new IllegalArgumentException("unknown playerId " + id);
+      int index = -1;
+      for (int itemIndex = 0; itemIndex < slot.player.getMediaItemCount(); itemIndex++) {
+        if (mediaId.equals(slot.player.getMediaItemAt(itemIndex).mediaId)) {
+          index = itemIndex;
+          break;
+        }
+      }
+      if (index < 0) throw new IllegalArgumentException("unknown mediaId " + mediaId);
+      boolean current = index == slot.player.getCurrentMediaItemIndex();
+      boolean wasPlaying = slot.player.getPlayWhenReady();
+      slot.player.replaceMediaItem(index, mediaItem(mediaId, url));
+      if (current) {
+        slot.hasRenderedFirstFrame = false;
+        slot.player.seekToDefaultPosition(index);
+        slot.player.prepare();
+        if (wasPlaying) slot.player.play();
+      }
+    }
+
+    synchronized void play(int id, String mediaId, boolean force) {
+      PlayerSlot slot = slots.get(id);
+      if (slot == null) throw new IllegalArgumentException("unknown playerId " + id);
+      if (slot.player.getMediaItemCount() == 0) {
+        throw new IllegalStateException("playlist is empty");
+      }
+
+      int targetIndex = slot.player.getCurrentMediaItemIndex();
+      if (mediaId != null && !mediaId.isEmpty()) {
+        targetIndex = -1;
+        for (int index = 0; index < slot.player.getMediaItemCount(); index++) {
+          if (mediaId.equals(slot.player.getMediaItemAt(index).mediaId)) {
+            targetIndex = index;
+            break;
+          }
+        }
+        if (targetIndex < 0) throw new IllegalArgumentException("unknown mediaId " + mediaId);
+      }
+
+      boolean restart = force
+          || slot.player.getPlaybackState() == Player.STATE_ENDED
+          || isAtEnd(slot.player);
+      if (targetIndex != slot.player.getCurrentMediaItemIndex() || restart) {
+        slot.hasRenderedFirstFrame = false;
+        slot.player.seekToDefaultPosition(targetIndex);
+      }
+      if (slot.player.getPlaybackState() == Player.STATE_IDLE || restart) {
+        slot.player.prepare();
+      }
+      slot.player.play();
     }
 
     synchronized void moveTo(int id, int index) {
@@ -332,6 +401,7 @@ public final class HlsCachePlayerPlugin
       if (index < 0 || index >= slot.player.getMediaItemCount()) {
         throw new IndexOutOfBoundsException("playlist index " + index);
       }
+      slot.hasRenderedFirstFrame = false;
       slot.player.seekToDefaultPosition(index);
       slot.player.prepare();
     }
@@ -340,6 +410,7 @@ public final class HlsCachePlayerPlugin
         int id, String mediaId, String url, boolean autoPlay) {
       PlayerSlot slot = slots.get(id);
       if (slot == null) throw new IllegalArgumentException("unknown playerId " + id);
+      slot.hasRenderedFirstFrame = false;
       slot.player.setMediaSource(source(mediaId, url), true);
       slot.player.prepare();
       if (autoPlay) slot.player.play(); else slot.player.pause();
@@ -364,6 +435,10 @@ public final class HlsCachePlayerPlugin
     private PlayerSlot createSlot() {
       int id = nextId++;
       ExoPlayer player = new ExoPlayer.Builder(context).build();
+      // The playlist is an addressable source registry. Advancing to another
+      // item must only happen through moveTo()/play(mediaId), never implicitly
+      // when the current item ends.
+      player.setPauseAtEndOfMediaItems(true);
       TextureRegistry.SurfaceTextureEntry texture = textures.createSurfaceTexture();
       Surface surface = new Surface(texture.surfaceTexture());
       player.setVideoSurface(surface);
@@ -384,6 +459,10 @@ public final class HlsCachePlayerPlugin
           if (size.width > 0 && size.height > 0) {
             texture.surfaceTexture().setDefaultBufferSize(size.width, size.height);
           }
+          emitState(id, player);
+        }
+        @Override public void onRenderedFirstFrame() {
+          slot.hasRenderedFirstFrame = true;
           emitState(id, player);
         }
         @Override public void onPlayerError(PlaybackException error) {
@@ -408,7 +487,8 @@ public final class HlsCachePlayerPlugin
 
     private Map<String, Object> state(int id, ExoPlayer player) {
       Map<String, Object> event = event(id, "state");
-      event.put("playbackState", player.getPlaybackState());
+      event.put("playbackState", isAtEnd(player)
+          ? Player.STATE_ENDED : player.getPlaybackState());
       event.put("isPlaying", player.isPlaying());
       event.put("positionMs", player.getCurrentPosition());
       event.put("durationMs", Math.max(0, player.getDuration()));
@@ -418,7 +498,18 @@ public final class HlsCachePlayerPlugin
       event.put("videoHeight", player.getVideoSize().height);
       MediaItem current = player.getCurrentMediaItem();
       event.put("mediaId", current == null ? "" : current.mediaId);
+      PlayerSlot slot = slots.get(id);
+      event.put("hasRenderedFirstFrame",
+          slot != null && slot.hasRenderedFirstFrame);
       return event;
+    }
+
+    private static boolean isAtEnd(ExoPlayer player) {
+      long duration = player.getDuration();
+      return !player.isPlaying()
+          && duration != C.TIME_UNSET
+          && duration > 0
+          && player.getCurrentPosition() >= duration;
     }
 
     synchronized Map<String, Object> state(int id) {

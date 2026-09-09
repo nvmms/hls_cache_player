@@ -1,35 +1,45 @@
 import 'native_bridge.dart';
-import 'hls_cache_proxy.dart';
 import 'video_controller.dart';
 
-/// Entry point for the single process-wide native player.
+/// Process-wide cache service and factory for independent native players.
 class HlsCachePlayer {
   HlsCachePlayer._();
 
-  static HlsPlayerController? _controller;
-  static Future<HlsPlayerController>? _creating;
+  static bool _configured = false;
+  static Future<void>? _configuring;
 
   static Future<HlsPlayerController> create({
     int memoryCacheBytes = 48 * 1024 * 1024,
     int diskCacheBytes = 768 * 1024 * 1024,
   }) async {
-    final existing = _controller;
-    if (existing != null) return existing;
-    final pending = _creating;
-    if (pending != null) return pending;
-    final creation = _create(
+    await configure(
       memoryCacheBytes: memoryCacheBytes,
       diskCacheBytes: diskCacheBytes,
     );
-    _creating = creation;
+    return _createController();
+  }
+
+  static Future<void> configure({
+    int memoryCacheBytes = 48 * 1024 * 1024,
+    int diskCacheBytes = 768 * 1024 * 1024,
+  }) async {
+    if (_configured) return;
+    final pending = _configuring;
+    if (pending != null) return pending;
+    final configuring = _configure(
+      memoryCacheBytes: memoryCacheBytes,
+      diskCacheBytes: diskCacheBytes,
+    );
+    _configuring = configuring;
     try {
-      return await creation;
+      await configuring;
+      _configured = true;
     } finally {
-      if (identical(_creating, creation)) _creating = null;
+      if (identical(_configuring, configuring)) _configuring = null;
     }
   }
 
-  static Future<HlsPlayerController> _create({
+  static Future<void> _configure({
     required int memoryCacheBytes,
     required int diskCacheBytes,
   }) async {
@@ -37,28 +47,22 @@ class HlsCachePlayer {
       'memoryCacheBytes': memoryCacheBytes,
       'diskCacheBytes': diskCacheBytes,
     });
-    await HlsCacheProxy.instance.configure(
-      memoryCacheBytes: memoryCacheBytes,
-      diskCacheBytes: diskCacheBytes,
-    );
+  }
+
+  static Future<HlsPlayerController> _createController() async {
     final created = await NativeVideoBridge.methods
         .invokeMapMethod<Object?, Object?>('createPlayer', const {});
     final id = (created?['playerId'] as num?)?.toInt();
     if (id == null) throw StateError('Native player did not return an id.');
-    final controller = HlsPlayerController.internal(
+    return HlsPlayerController.internal(
       id,
       (created?['textureId'] as num?)?.toInt(),
     );
-    _controller = controller;
-    return controller;
   }
 
   static Future<void> dispose() async {
-    await _creating;
-    final controller = _controller;
-    _controller = null;
-    if (controller != null) await controller.release();
+    await _configuring;
     await NativeVideoBridge.methods.invokeMethod<void>('dispose');
-    await HlsCacheProxy.instance.dispose();
+    _configured = false;
   }
 }

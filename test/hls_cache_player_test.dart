@@ -57,6 +57,7 @@ void main() {
   test('VideoPlayerValue exposes derived playback state', () {
     const value = VideoPlayerValue(
       playbackState: VideoPlaybackState.ready,
+      hasRenderedFirstFrame: true,
       videoWidth: 1920,
       videoHeight: 1080,
     );

@@ -104,6 +104,14 @@ public final class HlsCachePlayerPlugin: NSObject, FlutterPlugin,
         )
         result(nil)
 
+      case "updateSource":
+        try engine.updateSource(
+          playerId(arguments),
+          mediaId: arguments["mediaId"] as? String ?? "",
+          url: try requiredURL(arguments)
+        )
+        result(nil)
+
       case "moveTo":
         try engine.moveTo(
           playerId(arguments),
@@ -121,7 +129,11 @@ public final class HlsCachePlayerPlugin: NSObject, FlutterPlugin,
         result(nil)
 
       case "play":
-        try engine.play(playerId(arguments))
+        try engine.play(
+          playerId(arguments),
+          mediaId: arguments["mediaId"] as? String,
+          force: arguments["force"] as? Bool ?? false
+        )
         result(nil)
 
       case "pause":

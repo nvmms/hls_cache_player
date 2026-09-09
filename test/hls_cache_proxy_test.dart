@@ -68,7 +68,7 @@ seg2.ts?auth_key=second
   });
 
   tearDown(() async {
-    await HlsCacheProxy.instance.dispose();
+    await HlsCacheProxy.dispose();
     await upstream.close(force: true);
     await cacheDirectory.delete(recursive: true);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -79,13 +79,14 @@ seg2.ts?auth_key=second
       () async {
     final origin = 'http://${upstream.address.address}:${upstream.port}';
     final urls = await Future.wait(List.generate(8, (index) {
-      return HlsCacheProxy.instance.preload(HlsVideoSource(
+      return HlsCacheProxy.preload(HlsVideoSource(
         cacheKey: 'concurrent-video',
         url: '$origin/video.m3u8?auth_key=$index',
       ));
     }));
     expect(cacheDirectoryCalls, 1);
     expect(urls.map((url) => Uri.parse(url).port).toSet(), hasLength(1));
+    expect(urls.toSet(), hasLength(1));
     final client = HttpClient();
     try {
       for (final url in urls) {
@@ -100,7 +101,7 @@ seg2.ts?auth_key=second
   test('preload returns a proxy playlist and warms only the first segment',
       () async {
     final origin = 'http://${upstream.address.address}:${upstream.port}';
-    final proxyUrl = await HlsCacheProxy.instance.preload(
+    final proxyUrl = await HlsCacheProxy.preload(
       HlsVideoSource(
         cacheKey: 'video-stable-key',
         url: '$origin/video.m3u8?auth_key=playlist',
@@ -148,12 +149,14 @@ seg2.ts?auth_key=second
     await _read(client, Uri.parse(lines[1]));
     expect(requests['/seg2.ts'], 1, reason: 'later segments should persist');
 
-    await HlsCacheProxy.instance.preload(
+    final refreshedProxyUrl = await HlsCacheProxy.preload(
       HlsVideoSource(
         cacheKey: 'video-stable-key',
         url: '$origin/video.m3u8?auth_key=refreshed',
       ),
     );
+    expect(refreshedProxyUrl, proxyUrl,
+        reason: 'cacheKey must define a stable playback URL');
     expect(requests['/video.m3u8'], 2, reason: 'playlist signatures refresh');
     expect(requests['/seg1.ts'], 1, reason: 'stable segments remain cached');
     // Signature refresh must not invalidate URLs held by an existing player.
@@ -164,11 +167,10 @@ seg2.ts?auth_key=second
 
   test('an inactive tab can reuse its URLs after other videos are loaded',
       () async {
-    final proxy = HlsCacheProxy.instance;
     final origin = 'http://${upstream.address.address}:${upstream.port}';
     final client = HttpClient();
     // Retain the playlist and segment URL as an inactive player would.
-    final oldUrl = await proxy.preload(HlsVideoSource(
+    final oldUrl = await HlsCacheProxy.preload(HlsVideoSource(
       cacheKey: 'shared-video',
       url: '$origin/video.m3u8?auth_key=old',
     ));
@@ -177,15 +179,15 @@ seg2.ts?auth_key=second
       final oldSegment = const LineSplitter().convert(oldPlaylist).firstWhere(
             (line) => line.isNotEmpty && !line.startsWith('#'),
           );
-      await proxy.configure(
+      await HlsCacheProxy.configure(
           memoryCacheBytes: 0, diskCacheBytes: 768 * 1024 * 1024);
       for (var index = 0; index < 12; index++) {
-        await proxy.preload(HlsVideoSource(
+        await HlsCacheProxy.preload(HlsVideoSource(
           cacheKey: 'video-$index',
           url: '$origin/video.m3u8?auth_key=$index',
         ));
       }
-      await proxy.preload(HlsVideoSource(
+      await HlsCacheProxy.preload(HlsVideoSource(
         cacheKey: 'shared-video',
         url: '$origin/video.m3u8?auth_key=new',
       ));
@@ -203,7 +205,7 @@ seg2.ts?auth_key=second
       expect(await _read(client, Uri.parse(oldSegment)), hasLength(32));
     } finally {
       client.close(force: true);
-      await proxy.configure(
+      await HlsCacheProxy.configure(
           memoryCacheBytes: 48 * 1024 * 1024,
           diskCacheBytes: 768 * 1024 * 1024);
     }
@@ -211,7 +213,7 @@ seg2.ts?auth_key=second
 
   test('404 response identifies the missing route', () async {
     final origin = 'http://${upstream.address.address}:${upstream.port}';
-    final url = Uri.parse(await HlsCacheProxy.instance.preload(HlsVideoSource(
+    final url = Uri.parse(await HlsCacheProxy.preload(HlsVideoSource(
       cacheKey: 'diagnostics',
       url: '$origin/video.m3u8',
     )));

@@ -35,6 +35,7 @@ class VideoPlayerValue {
     this.cacheSpeed = 0.0,
     this.videoWidth = 0,
     this.videoHeight = 0,
+    this.hasRenderedFirstFrame = false,
     this.error,
   });
 
@@ -52,11 +53,13 @@ class VideoPlayerValue {
   final double cacheSpeed;
   final int videoWidth;
   final int videoHeight;
+  final bool hasRenderedFirstFrame;
   final String? error;
 
   bool get isInitialized =>
-      playbackState == VideoPlaybackState.ready ||
-      playbackState == VideoPlaybackState.ended;
+      hasRenderedFirstFrame &&
+      (playbackState == VideoPlaybackState.ready ||
+          playbackState == VideoPlaybackState.ended);
   bool get isBuffering => playbackState == VideoPlaybackState.buffering;
   bool get isEnded => playbackState == VideoPlaybackState.ended;
   double get aspectRatio =>
@@ -66,10 +69,10 @@ class VideoPlayerValue {
   ///
   /// For example, a 60-second video with 30 seconds buffered reports 30
   /// seconds here.
-  Duration get cacheProgress => duration > Duration.zero &&
-          bufferedPosition > duration
-      ? duration
-      : bufferedPosition;
+  Duration get cacheProgress =>
+      duration > Duration.zero && bufferedPosition > duration
+          ? duration
+          : bufferedPosition;
 
   /// Fraction of [duration] currently buffered, clamped to 0...1.
   double get cacheProgressRatio => duration > Duration.zero
@@ -88,6 +91,7 @@ class VideoPlayerValue {
     double? cacheSpeed,
     int? videoWidth,
     int? videoHeight,
+    bool? hasRenderedFirstFrame,
     String? error,
     bool clearError = false,
   }) =>
@@ -101,6 +105,8 @@ class VideoPlayerValue {
         cacheSpeed: cacheSpeed ?? this.cacheSpeed,
         videoWidth: videoWidth ?? this.videoWidth,
         videoHeight: videoHeight ?? this.videoHeight,
+        hasRenderedFirstFrame:
+            hasRenderedFirstFrame ?? this.hasRenderedFirstFrame,
         error: clearError ? null : error ?? this.error,
       );
 }

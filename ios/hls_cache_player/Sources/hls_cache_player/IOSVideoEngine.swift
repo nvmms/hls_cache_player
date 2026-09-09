@@ -37,6 +37,7 @@ private final class IOSPlayerSlot {
   var playSpeed: Float = 1.0
   var playList: [(mediaId: String, url: URL)] = []
   var currentIndex = 0
+  var hasRenderedFirstFrame = false
   var resourceLoader: IOSHLSResourceLoader?
   var timeControlObservation: NSKeyValueObservation?
   var itemStatusObservation: NSKeyValueObservation?
@@ -128,14 +129,7 @@ final class IOSVideoEngine {
 
   func createPlayer() throws -> [String: Any] {
     precondition(Thread.isMainThread)
-    let slot: IOSPlayerSlot
-    if let existing = slots.values.first {
-      slot = existing
-    } else {
-      slot = IOSPlayerSlot(id: nextPlayerId)
-      nextPlayerId += 1
-      slots[slot.id] = slot
-    }
+    let slot = try obtainSlot()
     slot.leases = 1
     return ["playerId": slot.id]
   }
@@ -143,11 +137,22 @@ final class IOSVideoEngine {
   func addSource(_ id: Int, mediaId: String, url: URL) throws {
     guard !mediaId.isEmpty else { throw IOSVideoError.invalidSource }
     let slot = try playerSlot(id)
-    slot.playList.append((mediaId, url))
-    if slot.player.currentItem == nil {
-      slot.currentIndex = 0
-      replaceItem(slot, url: url)
+    if slot.playList.contains(where: { $0.mediaId == mediaId }) {
+      try updateSource(id, mediaId: mediaId, url: url)
+      return
     }
+    slot.playList.append((mediaId, url))
+  }
+
+  func updateSource(_ id: Int, mediaId: String, url: URL) throws {
+    let slot = try playerSlot(id)
+    guard let index = slot.playList.firstIndex(where: { $0.mediaId == mediaId })
+    else { throw IOSVideoError.invalidSource }
+    slot.playList[index] = (mediaId, url)
+    guard index == slot.currentIndex, slot.player.currentItem != nil else { return }
+    let wasPlaying = slot.wantsToPlay
+    replaceItem(slot, url: url)
+    if wasPlaying { slot.player.playImmediately(atRate: slot.playSpeed) }
   }
 
   func moveTo(_ id: Int, index: Int) throws {
@@ -177,16 +182,38 @@ final class IOSVideoEngine {
   }
 
   private func replaceItem(_ slot: IOSPlayerSlot, url: URL) {
+    slot.hasRenderedFirstFrame = false
     let item = AVPlayerItem(asset: AVURLAsset(url: url))
     slot.player.replaceCurrentItem(with: item)
     installObservers(slot, item: item)
   }
 
-  func play(_ id: Int) throws {
+  func play(_ id: Int, mediaId: String?, force: Bool) throws {
     let slot = try playerSlot(id)
+    if let mediaId, !mediaId.isEmpty {
+      guard let index = slot.playList.firstIndex(where: { $0.mediaId == mediaId })
+      else { throw IOSVideoError.invalidSource }
+      if index != slot.currentIndex || force {
+        slot.currentIndex = index
+        replaceItem(slot, url: slot.playList[index].url)
+      }
+    } else if force, slot.playList.indices.contains(slot.currentIndex) {
+      replaceItem(slot, url: slot.playList[slot.currentIndex].url)
+    }
+    if slot.player.currentItem == nil {
+      guard slot.playList.indices.contains(slot.currentIndex) else {
+        throw IOSVideoError.invalidSource
+      }
+      replaceItem(slot, url: slot.playList[slot.currentIndex].url)
+    }
     if slot.player.currentItem?.status == .failed {
       emitError(slot, slot.player.currentItem?.error)
       return
+    }
+    if let duration = slot.player.currentItem?.duration,
+       duration.isNumeric,
+       CMTimeCompare(slot.player.currentTime(), duration) >= 0 {
+      slot.player.seek(to: .zero)
     }
     slot.wantsToPlay = true
     slot.player.playImmediately(atRate: slot.playSpeed)
@@ -343,6 +370,9 @@ final class IOSVideoEngine {
         if item.status == .readyToPlay, slot.wantsToPlay {
           slot.player.playImmediately(atRate: slot.playSpeed)
         }
+        if item.status == .readyToPlay {
+          slot.hasRenderedFirstFrame = true
+        }
         self.emitState(slot)
       }
     }
@@ -427,6 +457,7 @@ final class IOSVideoEngine {
       "waitingReason": slot.player.reasonForWaitingToPlay?.rawValue ?? "",
       "mediaId": slot.playList.indices.contains(slot.currentIndex)
         ? slot.playList[slot.currentIndex].mediaId : "",
+      "hasRenderedFirstFrame": slot.hasRenderedFirstFrame,
     ]
   }
 

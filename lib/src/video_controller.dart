@@ -3,11 +3,10 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import 'native_bridge.dart';
-import 'hls_cache_proxy.dart';
 import 'video_models.dart';
 
-/// Controls the process-wide native player. The same controller and rendering
-/// object can be reused by different routes.
+/// Controls one independent native player. Applications may pool and reuse
+/// controllers across routes according to their own resource policy.
 class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
   HlsPlayerController.internal(
     this.playerId,
@@ -22,7 +21,11 @@ class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
 
   final int playerId;
   final int? textureId;
-  final List<HlsVideoSource> _playList = <HlsVideoSource>[];
+  final List<String> _playList = <String>[];
+  final Map<String, String> _playbackUrls = {};
+  final Map<String, VideoPlayerValue> _mediaValues = {};
+  final Map<String, StreamController<VideoPlayerValue>> _mediaStateControllers =
+      {};
   String? _currentMediaId;
   bool _standalone = false;
   late final StreamSubscription<Map<Object?, Object?>> _events;
@@ -38,70 +41,155 @@ class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
   /// Position-only updates for progress widgets that should rebuild locally.
   Stream<Duration> get positions => _positionController.stream;
 
-  List<HlsVideoSource> get playList => List.unmodifiable(_playList);
+  List<String> get playList => List.unmodifiable(_playList);
   String? get currentMediaId => _currentMediaId;
 
-  Future<void> addSource(HlsVideoSource source) async {
+  /// Latest known state for [mediaId], or null when it has not been added.
+  VideoPlayerValue? stateOf(String mediaId) => _mediaValues[mediaId];
+
+  /// State updates for one media item. Every new listener first receives the
+  /// latest snapshot, so it is safe to use directly with StreamBuilder.
+  Stream<VideoPlayerValue> statesOf(String mediaId) {
+    final updates = _mediaStateControllers
+        .putIfAbsent(
+          mediaId,
+          () => StreamController<VideoPlayerValue>.broadcast(sync: true),
+        )
+        .stream;
+    return Stream<VideoPlayerValue>.multi((events) {
+      final current = stateOf(mediaId);
+      if (current != null) events.add(current);
+      final subscription = updates.listen(
+        events.add,
+        onError: events.addError,
+        onDone: events.close,
+      );
+      events.onCancel = subscription.cancel;
+    });
+  }
+
+  /// Adds a prepared playback URL to the native playlist.
+  /// This method neither preloads nor prepares the native media item. Loading
+  /// starts only after [moveTo] or [play].
+  Future<void> addSource({
+    required String mediaId,
+    required String playbackUrl,
+  }) async {
     _assertUsable();
-    if (_playList.any((item) => item.cacheKey == source.cacheKey)) {
-      throw ArgumentError.value(source.cacheKey, 'source.cacheKey',
-          'mediaId must be unique in the playlist.');
+    final previousUrl = _playbackUrls[mediaId];
+    if (_playList.contains(mediaId) && previousUrl != null) {
+      if (previousUrl == playbackUrl) {
+        debugPrint(
+          'HlsPlayerController(playerId: $playerId): mediaId "$mediaId" '
+          'already has the same URL; ignoring addSource.',
+        );
+        return;
+      }
+      debugPrint(
+        'HlsPlayerController(playerId: $playerId): mediaId "$mediaId" '
+        'received a new URL; updating the existing playlist item.',
+      );
+      await _invoke('updateSource', {
+        'mediaId': mediaId,
+        'url': playbackUrl,
+      });
+      _playbackUrls[mediaId] = playbackUrl;
+      return;
     }
-    final url = await _preload(source);
+    // Register the initial value before invoking native code. Native state
+    // events can arrive before the method-channel future completes.
+    if (!_mediaValues.containsKey(mediaId)) {
+      _setMediaValue(mediaId, const VideoPlayerValue());
+    }
     if (_standalone) {
       await _invoke('changeSource', {
-        'mediaId': source.cacheKey,
-        'url': url,
+        'mediaId': mediaId,
+        'url': playbackUrl,
         'autoPlay': false,
       });
       _standalone = false;
     } else {
-      await _invoke('addSource', {'mediaId': source.cacheKey, 'url': url});
+      await _invoke('addSource', {
+        'mediaId': mediaId,
+        'url': playbackUrl,
+      });
     }
-    _playList.add(source);
-    _currentMediaId ??= source.cacheKey;
+    _playList.add(mediaId);
+    _playbackUrls[mediaId] = playbackUrl;
+    _currentMediaId ??= mediaId;
   }
 
-  Future<void> play([String? mediaId]) async {
-    if (mediaId != null) {
-      final index = _playList.indexWhere((item) => item.cacheKey == mediaId);
-      if (index < 0) throw ArgumentError.value(mediaId, 'mediaId');
-      await moveTo(index);
+  /// Starts or resumes playback of [mediaId].
+  ///
+  /// Selecting the already-current item resumes it without seeking. Set
+  /// [force] to true to restart it from the beginning. An item that has ended
+  /// is always restarted, even when [force] is false. [looping] controls
+  /// whether this item repeats when it reaches the end.
+  Future<void> play({
+    String? mediaId,
+    bool force = false,
+    bool looping = false,
+  }) async {
+    _assertUsable();
+    final targetMediaId = mediaId ?? _currentMediaId;
+    if (mediaId != null && !_playbackUrls.containsKey(mediaId)) {
+      throw ArgumentError.value(mediaId, 'mediaId');
     }
-    await _invoke('play');
+
+    await setLooping(looping);
+
+    if (targetMediaId != null && targetMediaId != _currentMediaId) {
+      _deactivateCurrent(targetMediaId);
+      _currentMediaId = targetMediaId;
+    }
+    await _invoke('play', {
+      if (targetMediaId != null) 'mediaId': targetMediaId,
+      'force': force,
+    });
   }
 
-  Future<void> moveTo(int index) async {
-    if (index < 0 || index >= _playList.length) {
-      throw RangeError.index(index, _playList, 'index');
+  /// Selects and prepares [mediaId] without starting playback.
+  Future<void> moveTo(String mediaId) async {
+    final index = _playList.indexOf(mediaId);
+    if (index < 0) {
+      throw ArgumentError.value(
+        mediaId,
+        'mediaId',
+        'Source has not been added.',
+      );
     }
+    _deactivateCurrent(mediaId);
+    _setValue(
+      (stateOf(mediaId) ?? const VideoPlayerValue()).copyWith(
+        isPlaying: false,
+        hasRenderedFirstFrame: false,
+      ),
+      mediaId: mediaId,
+    );
+    _currentMediaId = mediaId;
     await _invoke('moveTo', {'index': index});
-    _currentMediaId = _playList[index].cacheKey;
   }
 
   /// Replaces playback with a standalone source while retaining the native
   /// player, Android texture, and iOS view.
-  Future<void> changeSource(HlsVideoSource source,
-      {bool autoPlay = true}) async {
-    final url = await _preload(source);
+  Future<void> changeSource({
+    required String mediaId,
+    required String playbackUrl,
+    bool autoPlay = true,
+  }) async {
+    _deactivateCurrent(mediaId);
+    _setValue(const VideoPlayerValue(), mediaId: mediaId);
     await _invoke('changeSource', {
-      'mediaId': source.cacheKey,
-      'url': url,
+      'mediaId': mediaId,
+      'url': playbackUrl,
       'autoPlay': autoPlay,
     });
     _playList.clear();
-    _currentMediaId = source.cacheKey;
+    _playbackUrls
+      ..clear()
+      ..[mediaId] = playbackUrl;
+    _currentMediaId = mediaId;
     _standalone = true;
-  }
-
-  Future<String> _preload(HlsVideoSource source) async {
-    if (defaultTargetPlatform == TargetPlatform.iOS) {
-      final url = await NativeVideoBridge.methods
-          .invokeMethod<String>('preload', source.toMessage());
-      if (url == null) throw StateError('Native iOS proxy returned no URL.');
-      return url;
-    }
-    return HlsCacheProxy.instance.preload(source);
   }
 
   Future<void> pause() => _invoke('pause');
@@ -146,11 +234,11 @@ class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
         'HlsPlayerController(playerId: $playerId, '
         'mediaId: $_currentMediaId) $message',
       );
-      _setValue(value.copyWith(error: message));
+      _setValue(value.copyWith(error: message), mediaId: _eventMediaId(event));
       return;
     }
     if (event['type'] != 'state') return;
-    _currentMediaId = event['mediaId']?.toString() ?? _currentMediaId;
+    final mediaId = _eventMediaId(event);
     final rawState = (event['playbackState'] as num?)?.toInt() ?? 1;
     final bufferedPosition = Duration(
       milliseconds: (event['bufferedPositionMs'] as num?)?.toInt() ?? 0,
@@ -166,7 +254,9 @@ class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
         : 0.0;
     _lastBufferSampleAt = now;
     _lastBufferedPosition = bufferedPosition;
-    _setValue(value.copyWith(
+    final previous =
+        mediaId == null ? value : stateOf(mediaId) ?? const VideoPlayerValue();
+    final next = previous.copyWith(
       playbackState: switch (rawState) {
         2 => VideoPlaybackState.buffering,
         3 => VideoPlaybackState.ready,
@@ -181,20 +271,48 @@ class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
         milliseconds: (event['durationMs'] as num?)?.toInt() ?? 0,
       ),
       bufferedPosition: bufferedPosition,
-      playSpeed: (event['playSpeed'] as num?)?.toDouble() ?? value.playSpeed,
+      playSpeed: (event['playSpeed'] as num?)?.toDouble() ?? previous.playSpeed,
       cacheSpeed: cacheSpeed,
       videoWidth: (event['videoWidth'] as num?)?.toInt() ?? 0,
       videoHeight: (event['videoHeight'] as num?)?.toInt() ?? 0,
+      hasRenderedFirstFrame: event['hasRenderedFirstFrame'] == true,
       clearError: true,
-    ));
+    );
+    if (mediaId != null && mediaId != _currentMediaId) {
+      _setMediaValue(mediaId, next);
+      return;
+    }
+    _setValue(next, mediaId: mediaId);
   }
 
-  void _setValue(VideoPlayerValue next) {
+  String? _eventMediaId(Map<Object?, Object?> event) {
+    final mediaId = event['mediaId']?.toString();
+    return mediaId == null || mediaId.isEmpty ? _currentMediaId : mediaId;
+  }
+
+  void _setValue(VideoPlayerValue next, {String? mediaId}) {
     final previousPosition = value.position;
     value = next;
     if (!_stateController.isClosed) _stateController.add(next);
     if (next.position != previousPosition && !_positionController.isClosed) {
       _positionController.add(next.position);
+    }
+    final targetMediaId = mediaId ?? _currentMediaId;
+    if (targetMediaId != null) _setMediaValue(targetMediaId, next);
+  }
+
+  void _setMediaValue(String mediaId, VideoPlayerValue next) {
+    _mediaValues[mediaId] = next;
+    final controller = _mediaStateControllers[mediaId];
+    if (controller != null && !controller.isClosed) controller.add(next);
+  }
+
+  void _deactivateCurrent(String nextMediaId) {
+    final previousMediaId = _currentMediaId;
+    if (previousMediaId == null || previousMediaId == nextMediaId) return;
+    final previous = stateOf(previousMediaId) ?? const VideoPlayerValue();
+    if (previous.isPlaying) {
+      _setMediaValue(previousMediaId, previous.copyWith(isPlaying: false));
     }
   }
 
@@ -208,6 +326,8 @@ class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
     await _events.cancel();
     await _stateController.close();
     await _positionController.close();
+    await Future.wait(
+        _mediaStateControllers.values.map((item) => item.close()));
     await NativeVideoBridge.methods.invokeMethod<void>('release', {
       'playerId': playerId,
     });
@@ -221,6 +341,9 @@ class HlsPlayerController extends ValueNotifier<VideoPlayerValue> {
     _events.cancel();
     _stateController.close();
     _positionController.close();
+    for (final controller in _mediaStateControllers.values) {
+      controller.close();
+    }
     NativeVideoBridge.methods.invokeMethod<void>('release', {
       'playerId': playerId,
     });
