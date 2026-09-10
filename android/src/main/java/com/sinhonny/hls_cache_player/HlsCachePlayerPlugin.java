@@ -142,9 +142,8 @@ public final class HlsCachePlayerPlugin
           result.success(null);
           break;
         case "setLooping":
-          engine.player(number(call, "playerId", -1).intValue()).setRepeatMode(
-              Boolean.TRUE.equals(call.argument("looping"))
-                  ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
+          engine.setLooping(number(call, "playerId", -1).intValue(),
+              Boolean.TRUE.equals(call.argument("looping")));
           result.success(null);
           break;
         case "setPlaySpeed":
@@ -404,6 +403,15 @@ public final class HlsCachePlayerPlugin
       slot.hasRenderedFirstFrame = false;
       slot.player.seekToDefaultPosition(index);
       slot.player.prepare();
+    }
+
+    synchronized void setLooping(int id, boolean looping) {
+      ExoPlayer player = player(id);
+      // pauseAtEndOfMediaItems is used to keep playlist navigation explicit,
+      // but it also prevents REPEAT_MODE_ONE from starting the item again.
+      // Temporarily disable it while the current item is configured to loop.
+      player.setPauseAtEndOfMediaItems(!looping);
+      player.setRepeatMode(looping ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
     }
 
     synchronized void changeSource(
